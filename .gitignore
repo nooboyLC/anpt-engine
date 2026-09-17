@@ -1,0 +1,41 @@
+# Python virtual environment — বড় ফাইল, track করার দরকার নেই
+program/venv/
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# AI Models — H: drive-এ আলাদা আছে
+program/support/models/
+program/support/bin/realesrgan-ncnn-vulkan.exe
+
+# Output videos — processed results
+output/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Runtime support folder — all downloaded binaries, models, caches, and temp
+program/support/
+
+# Analysis/report files — not part of source tracking
+HARDWARE_AND_QUALITY_ANALYSIS_REPORT.md
+task.md
+
+# Compat DLLs - auto-installed by setup.bat
+program/src/core/compat_dlls/

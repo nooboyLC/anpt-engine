@@ -1,0 +1,41 @@
+# =============================================================================
+# Auto Cut & Polishing Tool — requirements.txt
+# =============================================================================
+# All packages install ONLY into the local virtual environment (./venv/).
+# Nothing is installed globally on your system.
+#
+# How to install:
+#   Windows : double-click setup.bat  (auto-detects GPU)
+#   Linux   : bash setup.sh
+#   macOS   : bash setup.sh
+#   Colab   : pip install -r requirements.txt
+# =============================================================================
+
+# --- Core Utilities (required, always installed) ---
+numpy>=1.26.0,<2.0.0     # Fast numerical audio waveform processing
+yt-dlp>=2026.7.7         # YouTube / Facebook / public URL downloader
+
+# --- AI Voice Activity Detection (VAD) ---
+silero-vad>=6.0          # Silero Neural VAD — deep-learning speech/silence classifier
+                         # Used in hybrid mode together with Energy VAD for maximum accuracy.
+                         # Automatic fallback to Energy-only VAD if silero unavailable.
+
+# --- PyTorch (GPU-accelerated AI inference) ---
+# NOTE: setup.bat / setup.sh automatically chooses the correct build below.
+#       If installing manually:
+#   NVIDIA GPU (CUDA 12.4): pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu124
+#   CPU-only (smaller):     pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchaudio>=2.0.0
+torchvision>=0.15.0
+
+# --- AI Audio Enhancement ---
+clearvoice>=0.1.0        # ClearVoice (MossFormer2_SE_48K) — deep neural speech denoiser & enhancer
+voicefixer>=0.1.3        # VoiceFixer — neural de-reverberation & voice restoration (mode 0 & 2)
+
+# --- Computer Vision & AI Thumbnails ---
+opencv-python>=4.8.0,<=4.10.0.84       # Face detection (Haar Cascades) & frame sharpness calculation
+
+# --- 100% GPU Video Stabilization & Enhancement ---
+# Handled via PyTorch CUDA (Phase Correlation 2D FFT + Tensor Core Affine Warping & Cinema Polish)
+# Requires no additional packages; uses PyTorch and FFmpeg hardware acceleration.

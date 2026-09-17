@@ -1,0 +1,51 @@
+================================================================
+  AUTO CUT & POLISHING TOOL — VERSION HISTORY
+================================================================
+
+Version: D-0.0.1
+Date   : 2026-09-17 (19:07:30)
+Status : Stable (First clean versioned baseline)
+----------------------------------------------------------------
+SUMMARY:
+  প্রোগ্রামের প্রথম স্থিতিশীল ও পরীক্ষিত ভার্সন।
+  সম্পূর্ণ পাইপলাইন (১০টি ধাপ) সফলভাবে End-to-End রান সম্পন্ন।
+
+KEY FEATURES:
+  - 10-stage monolithic pipeline:
+      [1/10] Pre-level audio
+      [2/10] VAD-based silence cut + frame-locked video sync
+      [3/10] Echo/Reverb removal (VoiceFixer mode 2)
+      [4/10] AI audio enhancement (ClearVoice MossFormer2_SE_48K)
+      [5/10] Multi-speaker balance
+      [6/10] Loudness normalization (-14 LUFS)
+      [7/10] Fine-tuning
+      [8/10] GPU video stabilization (CUDA)
+      [9/10] Video AI enhancement (Real-ESRGAN Vulkan, ~136 fps)
+      [10/10] Final mux
+
+  - Strict C: drive isolation — সব ফাইল program\support\ এ থাকে
+  - VoiceFixer library source-level patch (patch_packages.py)
+  - Runtime monkey-patch (prefetch_models.py)
+  - Auto-setup: setup.bat / setup.sh (Windows + Linux/Mac)
+  - Auto-clean: clean.bat / clean.sh
+  - Cloud delivery: Gofile CDN auto-upload
+  - Local network delivery: HTTP server (port 8888)
+  - AI Thumbnail Generator (3 best frames)
+  - URL input: YouTube / Facebook / Direct stream (yt-dlp)
+  - Multi-speaker mode support
+
+KNOWN ISSUES (পরবর্তী ভার্সনে ঠিক হবে):
+  - ClearVoice GPU acceleration নেই (CPU-তে চলছে → ধীরগতি)
+  - NVENC encoder probe fail → CPU encoder (libx264) fallback
+  - prefetch_models.py UI-তে header box ডুপ্লিকেট প্রিন্ট সমস্যা
+  - clean.bat/sh-এ --venv flag নেই (automation-এ piped input কাজ করে না)
+
+TESTED ON:
+  - Windows 11
+  - NVIDIA GeForce GTX 1050 Ti (4GB VRAM)
+  - Python 3.12.10
+  - CUDA 12.4 / PyTorch 2.6.0+cu124
+  - Test file: ~50 min Bengali video (শিশু কল্যান পরিষদ)
+  - Total runtime: 1h 35m 20s
+
+================================================================
