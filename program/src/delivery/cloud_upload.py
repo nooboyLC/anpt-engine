@@ -95,7 +95,7 @@ def upload_to_gofile(dst: Path) -> str | None:
                 server = json.loads(r.read().decode())["data"]["servers"][0]["name"]
 
             cmd = ["curl", "-#", "-F", f"file=@{dst.resolve()}", f"https://{server}.gofile.io/contents/uploadfile"]
-            out = subprocess.check_output(cmd, timeout=3600).decode()
+            out = subprocess.check_output(cmd, timeout=3600).decode("utf-8", errors="replace")
             res = json.loads(out)
             if res.get("status") == "ok":
                 return res["data"]["downloadPage"]

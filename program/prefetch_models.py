@@ -9,6 +9,7 @@ Models downloaded:
   - Silero VAD (Neural Voice Activity Detection)
   - ClearVoice MossFormer2_SE_48K (AI speech enhancement)
   - VoiceFixer (Neural de-reverberation and voice restoration)
+  - Real-BasicVSR (Native Video Super-Resolution)
 
 Usage (called by setup.bat / setup.sh automatically):
     python prefetch_models.py
@@ -33,9 +34,7 @@ BIN_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _header(msg: str):
-    print(f"\n{'='*60}")
-    print(f"  {msg}")
-    print(f"{'='*60}")
+    print(f"\n>> {msg}")
 
 
 def _ok(msg: str):
@@ -173,20 +172,37 @@ def prefetch_voicefixer():
 
 
 
+def prefetch_realbasicvsr():
+    """Download Real-BasicVSR model weights into checkpoints/realbasicvsr/."""
+    _header("Real-BasicVSR (Native Video Super-Resolution)")
+    try:
+        from video.enhancer_ai import ensure_realbasicvsr_weights
+        ckpt = ensure_realbasicvsr_weights()
+        if ckpt and ckpt.exists():
+            _ok(f"Real-BasicVSR model ready: {ckpt.name} ({ckpt.stat().st_size / (1024*1024):.1f} MB)")
+        else:
+            _fail("Real-BasicVSR weights could not be downloaded now. Will retry on first use.")
+    except Exception as exc:
+        _fail(f"Real-BasicVSR download failed: {exc}")
+
+
 def main():
-    print("\n" + "=" * 60)
+    sys.stdout.flush()
+    print("=" * 60)
     print("  PRE-FETCHING ALL AI MODEL WEIGHTS")
     print("  (This runs only once — models are cached for future runs)")
     print("=" * 60)
-    print(f"  Saving to: {PROJECT_CHECKPOINTS}")
+    print(f"  Destination: {PROJECT_CHECKPOINTS}")
+    sys.stdout.flush()
 
     prefetch_silero_vad()
     prefetch_clearvoice()
     prefetch_voicefixer()
+    prefetch_realbasicvsr()
 
-    print("\n" + "=" * 60)
-    print("  ALL MODELS READY — Program will start instantly next time.")
-    print("=" * 60 + "\n")
+    sys.stdout.flush()
+    print("\n[OK] All AI model weights verified.\n")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

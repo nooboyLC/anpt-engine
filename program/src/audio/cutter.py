@@ -117,7 +117,7 @@ def _run_single_concat_cut(src: Path, batch_segments: list[tuple[float, float]],
                 "-threads", threads_val,
                 "-i", str(src), "-filter_complex", ";".join(fc),
                 "-map", "[outv]", "-map", "[outa]",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst)
             ]
             run_ffmpeg_with_progress(cmd_fallback, duration, "[2/10] CUT + SYNC")

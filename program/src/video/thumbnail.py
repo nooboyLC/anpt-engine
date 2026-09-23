@@ -44,15 +44,15 @@ def extract_best_thumbnails(
     temp_thumb_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        interval = max(4.0, min(15.0, duration / 36.0)) if duration > 0 else 5.0
+        interval = max(1.0, min(15.0, duration / 36.0)) if duration >= 1.0 else 0.5
         dec_threads = str(max(1, min(2, (os.cpu_count() or 2))))
-        hwaccel_args = ["-hwaccel", "cuda"] if torch_cuda_available() else []
         cmd = [
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
-        ] + hwaccel_args + [
             "-threads", dec_threads,
             "-i", str(video_path),
             "-vf", f"fps=1/{interval:.2f}",
+            "-pix_fmt", "yuvj420p",
+            "-strict", "unofficial",
             "-q:v", "2",
             str(temp_thumb_dir / "frame_%04d.jpg")
         ]
@@ -60,15 +60,17 @@ def extract_best_thumbnails(
 
         frame_files = sorted(list(temp_thumb_dir.glob("frame_*.jpg")))
         if not frame_files:
-            cmd_cpu = [
+            cmd_fallback = [
                 ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
                 "-threads", dec_threads,
                 "-i", str(video_path),
-                "-vf", f"fps=1/{interval:.2f}",
+                "-vframes", "1",
+                "-pix_fmt", "yuvj420p",
+                "-strict", "unofficial",
                 "-q:v", "2",
-                str(temp_thumb_dir / "frame_%04d.jpg")
+                str(temp_thumb_dir / "frame_0001.jpg")
             ]
-            run(cmd_cpu, check=False)
+            run(cmd_fallback, check=False)
             frame_files = sorted(list(temp_thumb_dir.glob("frame_*.jpg")))
 
         if not frame_files:
@@ -85,8 +87,9 @@ def extract_best_thumbnails(
             except Exception:
                 face_cascade = None
 
-        for fpath in frame_files:
+        for idx_f, fpath in enumerate(frame_files):
             sharpness = 0.0
+            mean_brightness = 128.0
             faces = []
             img_h, img_w = 720, 1280
 
@@ -95,7 +98,8 @@ def extract_best_thumbnails(
                 if img is not None:
                     img_h, img_w = img.shape[:2]
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    mean_brightness = float(cv2.mean(gray)[0])
+                    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
                     if face_cascade is not None:
                         detected = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
@@ -106,9 +110,11 @@ def extract_best_thumbnails(
                     with Image.open(fpath) as pil_img:
                         img_w, img_h = pil_img.size
                         gray = pil_img.convert("L")
+                        stat_gray = ImageStat.Stat(gray)
+                        mean_brightness = float(stat_gray.mean[0]) if stat_gray.mean else 128.0
                         edges = gray.filter(ImageFilter.FIND_EDGES)
                         stat = ImageStat.Stat(edges)
-                        sharpness = stat.var[0] if stat.var else 0.0
+                        sharpness = float(stat.var[0]) if stat.var else 0.0
                 except Exception:
                     fsize = fpath.stat().st_size
                     sharpness = float(fsize) / 1000.0
@@ -124,6 +130,8 @@ def extract_best_thumbnails(
             total_score = sharpness * (1.0 + face_score)
             scored_frames.append({
                 "path": fpath,
+                "frame_idx": idx_f,
+                "mean_brightness": mean_brightness,
                 "score": total_score,
                 "sharpness": sharpness,
                 "faces": faces,
@@ -131,58 +139,76 @@ def extract_best_thumbnails(
             })
 
         output_paths = []
+        if not scored_frames:
+            print("[THUMBNAIL] [WARN] No valid candidate frames could be scored.")
+            return []
 
-        if multi_speaker and any(f["face_centers"] for f in scored_frames):
-            left_speaker_frames = []
-            right_speaker_frames = []
-            center_speaker_frames = []
+        # Filter out extreme dark (black frames) or extreme bright (white flashes)
+        valid_candidates = [f for f in scored_frames if f.get("mean_brightness", 128.0) > 15.0 and f.get("mean_brightness", 128.0) < 242.0]
+        if not valid_candidates:
+            # Fallback to all scored frames if filter was too strict
+            valid_candidates = scored_frames
 
+        # Sort candidate frames by total quality score (sharpness + face composition) descending
+        valid_candidates.sort(key=lambda x: x["score"], reverse=True)
+
+        # Select top distinct frames (enforce minimum temporal spacing so thumbnails aren't identical)
+        selected_frames: list[dict] = []
+        min_frame_dist = max(1, len(frame_files) // 12)  # spacing in candidate indices
+
+        for cand in valid_candidates:
+            cand_idx = cand.get("frame_idx", 0)
+            # Check if this frame is sufficiently spaced from already selected frames
+            if all(abs(cand_idx - s.get("frame_idx", 0)) >= min_frame_dist for s in selected_frames):
+                selected_frames.append(cand)
+            if len(selected_frames) >= 3:
+                break
+
+        # If diversity constraint was too tight, fill up from remaining top candidates
+        if len(selected_frames) < 3:
+            for cand in valid_candidates:
+                if cand not in selected_frames:
+                    selected_frames.append(cand)
+                if len(selected_frames) >= 3:
+                    break
+
+        # Always save sequentially: Thumbnail_01.jpg, Thumbnail_02.jpg, Thumbnail_03.jpg
+        for rank, frm in enumerate(selected_frames, 1):
+            out_thumb = output_dir / f"Thumbnail_{rank:02d}.jpg"
+            try:
+                shutil.copy2(frm["path"], out_thumb)
+                output_paths.append(out_thumb)
+                has_face = " (Face detected)" if frm.get("faces") else ""
+                print(f"  [OK] Saved thumbnail: {out_thumb.name} (Sharpness: {frm['sharpness']:.1f}{has_face})")
+            except Exception as exc:
+                print(f"  [WARN] Failed to write thumbnail {out_thumb.name}: {exc}")
+
+        # If multi-speaker mode is requested, also create speaker-tagged copies
+        if multi_speaker and any(f.get("face_centers") for f in scored_frames):
+            speaker_bins: dict[str, list[dict]] = {"Speaker1": [], "Speaker2": [], "Speaker3": []}
             for item in scored_frames:
-                centers = item["face_centers"]
+                centers = item.get("face_centers", [])
                 if not centers:
                     continue
                 avg_x = sum(centers) / len(centers)
-                if avg_x < 0.45:
-                    left_speaker_frames.append(item)
-                elif avg_x > 0.55:
-                    right_speaker_frames.append(item)
+                if avg_x < 0.40:
+                    speaker_bins["Speaker1"].append(item)
+                elif avg_x > 0.60:
+                    speaker_bins["Speaker2"].append(item)
                 else:
-                    center_speaker_frames.append(item)
+                    speaker_bins["Speaker3"].append(item)
 
-            speaker_groups = [
-                ("Speaker1", left_speaker_frames),
-                ("Speaker2", right_speaker_frames),
-                ("Speaker3", center_speaker_frames),
-            ]
-
-            count = 0
-            for spk_name, group in speaker_groups:
-                if not group:
-                    continue
-                group.sort(key=lambda x: x["score"], reverse=True)
-                top_frames = group[:2]
-                for idx, frm in enumerate(top_frames, 1):
-                    out_thumb = output_dir / f"Thumbnail_{spk_name}_{idx:02d}.jpg"
-                    shutil.copy2(frm["path"], out_thumb)
-                    output_paths.append(out_thumb)
-                    print(f"  [OK] Saved {spk_name} thumbnail: {out_thumb.name} (Sharpness: {frm['sharpness']:.1f})")
-                    count += 1
-
-            if count == 0:
-                scored_frames.sort(key=lambda x: x["score"], reverse=True)
-                for idx, frm in enumerate(scored_frames[:3], 1):
-                    out_thumb = output_dir / f"Thumbnail_{idx:02d}.jpg"
-                    shutil.copy2(frm["path"], out_thumb)
-                    output_paths.append(out_thumb)
-                    print(f"  [OK] Saved thumbnail: {out_thumb.name} (Sharpness: {frm['sharpness']:.1f})")
-        else:
-            scored_frames.sort(key=lambda x: x["score"], reverse=True)
-            top_3 = scored_frames[:3]
-            for idx, frm in enumerate(top_3, 1):
-                out_thumb = output_dir / f"Thumbnail_{idx:02d}.jpg"
-                shutil.copy2(frm["path"], out_thumb)
-                output_paths.append(out_thumb)
-                print(f"  [OK] Saved thumbnail: {out_thumb.name} (Sharpness: {frm['sharpness']:.1f})")
+            for spk_name, group in speaker_bins.items():
+                if group:
+                    group.sort(key=lambda x: x["score"], reverse=True)
+                    best_spk = group[0]
+                    spk_out = output_dir / f"Thumbnail_{spk_name}.jpg"
+                    try:
+                        shutil.copy2(best_spk["path"], spk_out)
+                        output_paths.append(spk_out)
+                        print(f"  [OK] Saved {spk_name} thumbnail: {spk_out.name} (Sharpness: {best_spk['sharpness']:.1f})")
+                    except Exception as exc:
+                        print(f"  [WARN] Failed to write {spk_name} thumbnail: {exc}")
 
         print("=" * 64 + "\n")
         return output_paths

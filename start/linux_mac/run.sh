@@ -5,7 +5,7 @@
 # Program code is inside:  ../../program/
 # =============================================================================
 
-set -e
+# Note: Not using 'set -e' so Python exit codes are visible to the user
 
 # Resolve symlinks to get the real script directory
 SCRIPT_PATH="$0"
@@ -49,6 +49,15 @@ export MPLCONFIGDIR="$PROGRAM_DIR/support/cache/matplotlib"
 export VOICEFIXER_CACHE="$PROGRAM_DIR/support/checkpoints/voicefixer"
 export VOICEFIXER_HOME="$PROGRAM_DIR/support/checkpoints/voicefixer"
 
+# Support binaries & libraries isolation (FFmpeg, Real-ESRGAN, Vulkan)
+export PATH="$PROGRAM_DIR/support/bin:$PATH"
+export LD_LIBRARY_PATH="$PROGRAM_DIR/support/bin:$PROGRAM_DIR/support/lib:${LD_LIBRARY_PATH:-}"
+
+# Configure Vulkan ICD for NVIDIA GPU (Colab & Linux)
+if [ -f "$PROGRAM_DIR/support/icd/nvidia_icd.json" ]; then
+    export VK_ICD_FILENAMES="$PROGRAM_DIR/support/icd/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:${VK_ICD_FILENAMES:-}"
+fi
+
 # Find Python — prefer local venv
 PY_CMD=""
 if [ -f "$PROGRAM_DIR/venv/bin/python" ]; then
@@ -68,4 +77,10 @@ fi
 
 
 
-exec "$PY_CMD" "$PROGRAM_DIR/main.py" "$@"
+"$PY_CMD" "$PROGRAM_DIR/main.py" "$@"
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "[EXIT] Program exited with error code $EXIT_CODE."
+fi
+exit $EXIT_CODE

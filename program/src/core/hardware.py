@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 
 from core.media_tools import command_exists, run, ffmpeg_path, ffprobe_path
+from core.config import BIN_DIR, PROJECT_CHECKPOINTS
 
 
 
@@ -86,17 +87,9 @@ def check_system_dependencies() -> bool:
     clearvoice_ok = False
     try:
         from core.config import PROJECT_CHECKPOINTS
-        import clearvoice
-        if not getattr(clearvoice, "_antigravity_patched", False):
-            _orig = clearvoice.network_wrapper.load_args_se
-            def _custom(self):
-                _orig(self)
-                self.args.checkpoint_dir = str(PROJECT_CHECKPOINTS / self.model_name)
-            clearvoice.network_wrapper.load_args_se = _custom
-            clearvoice._antigravity_patched = True
-        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(_io.StringIO()):
-            clearvoice.ClearVoice(task="speech_enhancement", model_names=["MossFormer2_SE_48K"])
-        clearvoice_ok = True
+        cv_ckpt = PROJECT_CHECKPOINTS / "MossFormer2_SE_48K" / "last_best_checkpoint.pt"
+        if cv_ckpt.exists() and cv_ckpt.stat().st_size > 100_000:
+            clearvoice_ok = True
     except Exception:
         pass
     if not clearvoice_ok:
@@ -105,20 +98,30 @@ def check_system_dependencies() -> bool:
 
     voicefixer_ok = False
     try:
-        from voicefixer import VoiceFixer
-        VoiceFixer()
-        voicefixer_ok = True
+        from core.config import PROJECT_CHECKPOINTS
+        vf_synth = PROJECT_CHECKPOINTS / "voicefixer" / "synthesis_module" / "44100" / "model.ckpt-1490000_trimed.pt"
+        vf_analysis = PROJECT_CHECKPOINTS / "voicefixer" / "analysis_module" / "checkpoints" / "vf.ckpt"
+        if (vf_synth.exists() and vf_analysis.exists() and
+                vf_synth.stat().st_size > 1_000_000 and vf_analysis.stat().st_size > 1_000_000):
+            voicefixer_ok = True
     except Exception:
         pass
     if not voicefixer_ok:
         issues.append((False, "AI Model: VoiceFixer",
                         "Not cached (optional) — run setup to pre-download"))
 
-    # ── Vulkan Binary ─────────────────────────────────────────────
-    if not ((BIN_DIR / "realesrgan-ncnn-vulkan.exe").exists() or
-            (BIN_DIR / "realesrgan-ncnn-vulkan").exists()):
-        issues.append((False, "Vulkan Engine (Real-ESRGAN)",
-                        "Not found (optional) — run setup to download"))
+    # ── Real-BasicVSR Weights ─────────────────────────────────────
+    realbasicvsr_ok = False
+    try:
+        from core.config import PROJECT_CHECKPOINTS
+        rb_ckpt = PROJECT_CHECKPOINTS / "realbasicvsr" / "realbasicvsr_c64b20_reds.pth"
+        if rb_ckpt.exists() and rb_ckpt.stat().st_size > 20_000_000:
+            realbasicvsr_ok = True
+    except Exception:
+        pass
+    if not realbasicvsr_ok:
+        issues.append((False, "AI Model: Real-BasicVSR",
+                        "Not cached (optional) — run setup to pre-download"))
 
     # ── Output ────────────────────────────────────────────────────
     has_critical = any(crit for crit, _, _ in issues)
@@ -147,31 +150,49 @@ def check_system_dependencies() -> bool:
 
 
 def gpu_info() -> dict:
-    """Queries NVIDIA GPU state via nvidia-smi."""
+    """Queries NVIDIA GPU state via nvidia-smi with PyTorch CUDA fallback."""
     info = {"available": False, "name": "", "vram_total": 0, "vram_used": 0, "util": 0}
-    if not command_exists("nvidia-smi"):
-        return info
-    try:
-        r = run([
-            "nvidia-smi",
-            "--query-gpu=name,memory.total,memory.used,utilization.gpu",
-            "--format=csv,noheader,nounits",
-        ], capture=True)
-        lines = r.stdout.strip().splitlines()
-        if lines:
-            line = lines[0]
-            parts = [x.strip() for x in line.split(",")]
-            if len(parts) >= 4:
-                name, total, used, util = parts[:4]
+    if command_exists("nvidia-smi"):
+        try:
+            r = run([
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ], capture=True)
+            lines = r.stdout.strip().splitlines()
+            if lines:
+                line = lines[0]
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) >= 4:
+                    name, total, used, util = parts[:4]
+                    info.update({
+                        "available": True,
+                        "name": name,
+                        "vram_total": int(float(total)),
+                        "vram_used": int(float(used)),
+                        "util": int(float(util)),
+                    })
+        except Exception:
+            pass
+
+    # Fallback to PyTorch CUDA device properties if nvidia-smi failed or returned 0
+    if not info["available"] or info["vram_total"] == 0:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(0)
+                tot_mb = int(props.total_memory / (1024 * 1024))
+                used_mb = int(torch.cuda.memory_allocated(0) / (1024 * 1024))
                 info.update({
                     "available": True,
-                    "name": name,
-                    "vram_total": int(float(total)),
-                    "vram_used": int(float(used)),
-                    "util": int(float(util)),
+                    "name": props.name,
+                    "vram_total": tot_mb,
+                    "vram_used": used_mb,
+                    "util": 0,
                 })
-    except Exception:
-        pass
+        except Exception:
+            pass
+
     return info
 
 
@@ -194,6 +215,15 @@ def torch_cuda_available() -> bool:
 
 def vulkan_available() -> bool:
     """Checks if Vulkan driver/tools are present for C++ ncnn engines."""
+    # 1. Custom or local ICD profile in program/support/icd
+    custom_icd = BIN_DIR.parent / "icd" / "nvidia_icd.json"
+    if custom_icd.is_file():
+        return True
+    vk_env = os.environ.get("VK_ICD_FILENAMES", "")
+    if vk_env and any(Path(p).is_file() for p in vk_env.split(":") if p.strip()):
+        return True
+
+    # 2. System vulkaninfo tool
     if command_exists("vulkaninfo"):
         try:
             r = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, timeout=5)
@@ -201,37 +231,47 @@ def vulkan_available() -> bool:
                 return True
         except Exception:
             pass
-    # In Colab or environments where nvidia driver is loaded, Vulkan is present via ICD
+
+    # 3. System Vulkan runtime library check
+    if command_exists("vulkaninfo"):
+        return True
+
+    # 4. Standard Linux Vulkan ICD directories
     if os.path.exists("/usr/share/vulkan/icd.d") or os.path.exists("/etc/vulkan/icd.d"):
         return True
+
+    # 5. Windows registry or system32 / bundled vulkan-1.dll
     if os.name == "nt":
-        # Windows registry or system32 vulkan-1.dll
         sys32 = Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "vulkan-1.dll"
-        if sys32.exists():
+        if sys32.exists() or (BIN_DIR / "vulkan-1.dll").exists():
             return True
+
     return False
 
 
 _BEST_ENCODER_CONFIG: tuple[str, list[str], str] | None = None
+_BEST_ENCODER_DIAGNOSTIC: str = ""
 
 
 def get_best_video_encoder_config() -> tuple[str, list[str], str]:
     """
     Universal hardware video encoder auto-negotiation:
       1. NVIDIA NVENC (h264_nvenc) - Cinema Quality P7 VBR
-      2. Intel QuickSync (h264_qsv)
-      3. AMD AMF (h264_amf)
-      4. Apple VideoToolbox (h264_videotoolbox)
-      5. Fallback: CPU (libx264)
+      2. NVIDIA NVENC (h264_nvenc) - Compatible Mode (Pascal/GTX 10xx)
+      3. Intel QuickSync (h264_qsv)
+      4. AMD AMF (h264_amf)
+      5. Apple VideoToolbox (h264_videotoolbox)
+      6. Fallback: CPU (libx264)
     Returns: (codec_name, quality_flags, human_readable_display_name)
     """
-    global _BEST_ENCODER_CONFIG
+    global _BEST_ENCODER_CONFIG, _BEST_ENCODER_DIAGNOSTIC
     if _BEST_ENCODER_CONFIG is not None:
         return _BEST_ENCODER_CONFIG
 
     try:
         ff = ffmpeg_path()
-    except Exception:
+    except Exception as exc:
+        _BEST_ENCODER_DIAGNOSTIC = f"FFmpeg not found: {exc}"
         _BEST_ENCODER_CONFIG = ("libx264", ["-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"], "CPU (libx264)")
         return _BEST_ENCODER_CONFIG
 
@@ -274,31 +314,51 @@ def get_best_video_encoder_config() -> tuple[str, list[str], str]:
             os.environ["LD_LIBRARY_PATH"] = _new_ld
 
     candidates = [
-        # Unconstrained Cinema VBR (-b:v 0 -cq 16) with P7 preset + Spatial & Temporal AQ
+        # 1. NVIDIA NVENC - High Quality VBR (Target ~8-12 Mbps for 1080p)
         ("h264_nvenc", [
-            "-preset", "p7", "-tune", "hq", "-rc:v", "vbr", "-cq", "16", "-b:v", "0",
-            "-maxrate", "50M", "-bufsize", "100M", "-spatial-aq", "1", "-temporal-aq", "1",
+            "-preset", "p6", "-tune", "hq", "-rc:v", "vbr", "-cq", "22", "-b:v", "8M",
+            "-maxrate", "14M", "-bufsize", "28M", "-spatial-aq", "1", "-temporal-aq", "1",
             "-pix_fmt", "yuv420p"
         ], "NVIDIA NVENC (GPU)", []),
-        ("h264_qsv",  ["-preset", "medium", "-global_quality", "18"], "Intel QuickSync (QSV)", []),
-        ("h264_amf",  ["-quality", "quality", "-rc", "cqp", "-qp_i", "18", "-qp_p", "18", "-pix_fmt", "yuv420p"], "AMD AMF (GPU)", []),
-        ("h264_videotoolbox", ["-q:v", "75", "-pix_fmt", "yuv420p"], "Apple VideoToolbox (GPU)", []),
+        # 2. NVIDIA NVENC - Broad Compatible Profile (GTX 10xx / Pascal safe)
+        ("h264_nvenc", [
+            "-preset", "medium", "-rc:v", "vbr", "-cq", "22", "-b:v", "8M",
+            "-maxrate", "14M", "-bufsize", "28M",
+            "-pix_fmt", "yuv420p"
+        ], "NVIDIA NVENC (GPU)", []),
+        # 3. Intel QuickSync
+        ("h264_qsv",  ["-preset", "medium", "-global_quality", "22"], "Intel QuickSync (QSV)", []),
+        # 4. AMD AMF
+        ("h264_amf",  ["-quality", "quality", "-rc", "cqp", "-qp_i", "22", "-qp_p", "22", "-pix_fmt", "yuv420p"], "AMD AMF (GPU)", []),
+        # 5. Apple VideoToolbox
+        ("h264_videotoolbox", ["-q:v", "62", "-pix_fmt", "yuv420p"], "Apple VideoToolbox (GPU)", []),
     ]
 
+    last_error = ""
     for enc, flags, name, pre_flags in candidates:
         try:
             cmd = ([ff, "-y", "-hide_banner", "-loglevel", "error"]
                    + pre_flags
                    + ["-f", "lavfi", "-i", "nullsrc=s=256x256:r=30:d=0.5",
                       "-c:v", enc] + flags + ["-f", "null", "-"])
-            r = subprocess.run(cmd, capture_output=True, timeout=15, env=_probe_env)
+            r = subprocess.run(cmd, capture_output=True, timeout=30, env=_probe_env, text=True)
             if r.returncode == 0:
                 _BEST_ENCODER_CONFIG = (enc, flags, name)
+                _BEST_ENCODER_DIAGNOSTIC = "OK"
                 return _BEST_ENCODER_CONFIG
-        except Exception:
+            else:
+                err = (r.stderr or "").strip()
+                if err and not last_error:
+                    # Clean up first line of error
+                    first_err_line = err.splitlines()[0] if err.splitlines() else err
+                    last_error = f"{enc}: {first_err_line}"
+        except Exception as probe_err:
+            if not last_error:
+                last_error = str(probe_err)
             continue
 
-    _BEST_ENCODER_CONFIG = ("libx264", ["-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"], "CPU (libx264)")
+    _BEST_ENCODER_DIAGNOSTIC = last_error or "Hardware encoder probe returned non-zero exit code"
+    _BEST_ENCODER_CONFIG = ("libx264", ["-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"], "CPU (libx264)")
     return _BEST_ENCODER_CONFIG
 
 
@@ -309,20 +369,105 @@ def nvenc_available() -> bool:
 
 
 def print_system():
-    """Prints diagnostic system banner."""
+    """Dynamically probes and displays active system hardware, AI models, and encoder."""
     g = gpu_info()
     cuda = torch_cuda_available()
-    vulkan = vulkan_available()
     _, _, enc_name = get_best_video_encoder_config()
+
     print("=" * 64)
     print("AUTO CUT & POLISHING TOOL — HIGH-PERFORMANCE ENGINE")
     print("=" * 64)
+
+    # 1. GPU & VRAM Status
     if g["available"]:
-        print(f"GPU    : {g['name']}")
-        print(f"VRAM   : {g['vram_used']} / {g['vram_total']} MB")
+        print(f"GPU Hardware   : {g['name']}")
+        print(f"VRAM Telemetry : {g['vram_used']} MB used / {g['vram_total']} MB total")
     else:
-        print("GPU    : NOT DETECTED (CPU Fallback Mode)")
-    print(f"CUDA   : {'ON (Tensor Cores Ready)' if cuda else 'OFF'}")
-    print(f"Vulkan : {'READY (Real-ESRGAN C++ Supported)' if vulkan else 'NOT DETECTED'}")
-    print(f"ENCODER: {enc_name}")
+        print("GPU Hardware   : None detected (CPU Mode)")
+
+    # 2. CUDA & Compute Architecture
+    if cuda:
+        try:
+            import torch
+            cap = torch.cuda.get_device_capability(0)
+            print(f"CUDA Compute   : Active (PyTorch {torch.__version__} | CC {cap[0]}.{cap[1]})")
+        except Exception:
+            print("CUDA Compute   : Active")
+    else:
+        print("CUDA Compute   : Inactive")
+
+    # 3. Dynamic Video Super-Resolution Engine Probe
+    video_ai_models = []
+    rb_ckpt = PROJECT_CHECKPOINTS / "realbasicvsr" / "realbasicvsr_c64b20_reds.pth"
+    if rb_ckpt.is_file() and rb_ckpt.stat().st_size > 20_000_000:
+        mb = rb_ckpt.stat().st_size / (1024 * 1024)
+        video_ai_models.append(f"Real-BasicVSR ({mb:.0f} MB, FP16 Ready)")
+    # Check for any other VSR model directories dynamically
+    for vsr_dir in PROJECT_CHECKPOINTS.glob("*"):
+        if vsr_dir.is_dir() and vsr_dir.name not in ("realbasicvsr", "MossFormer2_SE_48K", "voicefixer"):
+            pth_files = list(vsr_dir.glob("*.pth")) + list(vsr_dir.glob("*.pt"))
+            if pth_files:
+                largest = max(pth_files, key=lambda f: f.stat().st_size)
+                if largest.stat().st_size > 5_000_000:
+                    mb2 = largest.stat().st_size / (1024 * 1024)
+                    video_ai_models.append(f"{vsr_dir.name} ({mb2:.0f} MB)")
+
+    if video_ai_models:
+        print(f"Video AI Engine: {', '.join(video_ai_models)}")
+    else:
+        print("Video AI Engine: None cached (auto-fetch on first use)")
+
+    # 4. Dynamic Audio AI Engines Probe
+    audio_models = []
+    moss_dir = PROJECT_CHECKPOINTS / "MossFormer2_SE_48K"
+    if moss_dir.exists():
+        try:
+            if any(moss_dir.iterdir()):
+                audio_models.append("ClearVoice/MossFormer2")
+        except Exception:
+            pass
+    vf_dir = PROJECT_CHECKPOINTS / "voicefixer"
+    if vf_dir.exists():
+        try:
+            if any(vf_dir.iterdir()):
+                audio_models.append("VoiceFixer")
+        except Exception:
+            pass
+    # Silero VAD: check project cache first, then torch hub cache
+    silero_found = False
+    silero_file = PROJECT_CHECKPOINTS / "silero_vad.jit"
+    if silero_file.is_file():
+        silero_found = True
+    if not silero_found:
+        try:
+            import torch
+            hub_dir = Path(torch.hub.get_dir())
+            # Silero stores in snakers4_silero-vad_*
+            for d in hub_dir.glob("snakers4_silero*"):
+                if d.is_dir():
+                    silero_found = True
+                    break
+        except Exception:
+            pass
+    if not silero_found:
+        # Check if it can be imported (already in Python cache)
+        try:
+            from silero_vad import load_silero_vad  # noqa: F401
+            silero_found = True
+        except Exception:
+            pass
+    if silero_found:
+        audio_models.append("Silero-VAD")
+
+    if audio_models:
+        print(f"Audio AI Engine: {', '.join(audio_models)} (Offline Ready)")
+    else:
+        print("Audio AI Engine: None cached (auto-fetch on first use)")
+
+    # 5. Dynamic Video Encoder
+    if enc_name.startswith("CPU") and g["available"] and _BEST_ENCODER_DIAGNOSTIC:
+        print(f"Video Encoder  : {enc_name} [Note: {_BEST_ENCODER_DIAGNOSTIC}]")
+    else:
+        print(f"Video Encoder  : {enc_name}")
+
     print("=" * 64)

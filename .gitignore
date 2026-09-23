@@ -34,8 +34,14 @@ desktop.ini
 program/support/
 
 # Analysis/report files — not part of source tracking
-HARDWARE_AND_QUALITY_ANALYSIS_REPORT.md
+reports/
+HARDWARE_AND_QUALITY_ANALYSIS_REPORT*.md
+CODEBASE_ARCHITECTURE_GUIDE_RealBasicVSR_v2.md
 task.md
+checkpoints/
+.agents/
+AGENTS.md
+hardware_log_20260918_044528.csv
 
 # Compat DLLs - auto-installed by setup.bat
 program/src/core/compat_dlls/

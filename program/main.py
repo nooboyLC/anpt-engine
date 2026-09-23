@@ -4,7 +4,7 @@
 Auto Cut & Polishing Tool — Orchestrator
 ----------------------------------------
 Decoupled workflow pipeline:
-- Native C++/GPU Acceleration (FFmpeg NVENC/NVDEC, Vulkan Real-ESRGAN, CUDA Tensor Cores)
+- Native C++/GPU Acceleration (FFmpeg NVENC/NVDEC, Real-BasicVSR Temporal VSR, CUDA Tensor Cores)
 - Sub-chunk streaming with zero RAM overflow
 - Tight VAD silence removal
 - Cross-platform support (Windows & Linux / Google Colab)
@@ -85,7 +85,7 @@ from audio.mastering import (
 # Video Subsystem
 from video.stabilizer import stabilize_video
 from video.enhancer_filter import enhance_video
-from video.enhancer_ai import enhance_video_ai_vulkan
+from video.enhancer_ai import enhance_video_ai
 from video.thumbnail import extract_best_thumbnails
 
 # Delivery Subsystem
@@ -136,11 +136,16 @@ def process(args):
         timeline_duration = meta["duration"]
 
         # Step 1: Pre-level input audio dynamics
+        # First extract audio-only WAV so loudnorm runs on pure PCM (very fast),
+        # NOT on the full MP4 (which would cause ~50min bottleneck from video demux).
         pre_leveled_audio = None
         if meta["audio"]:
             log_step()
+            raw_audio = run_dir / "raw_audio.wav"
+            extract_audio(src, raw_audio)  # fast: just demux audio track
             pre_leveled = run_dir / "pre_leveled.wav"
-            pre_level_audio(src, pre_leveled, duration=meta["duration"])
+            pre_level_audio(raw_audio, pre_leveled, duration=meta["duration"])
+            raw_audio.unlink(missing_ok=True)
             pre_leveled_audio = pre_leveled
 
         # Step 2: Silence Removal & Auto-Cut
@@ -191,14 +196,17 @@ def process(args):
             engine_used = dereverb_audio(current_audio, dereverbed, getattr(args, "engine", "auto"), run_dir, duration=timeline_duration)
             current_audio = dereverbed
             print(f"Dereverb engine: {engine_used}")
+            cleanup_memory()
 
         # Step 4: Audio AI Enhancement (ClearVoice / VoiceFixer)
         if getattr(args, "audio_enhance", False) and meta["audio"]:
             log_step()
+            cleanup_memory()
             enhanced = run_dir / "enhanced.wav"
             engine_used = enhance_audio(current_audio, enhanced, getattr(args, "engine", "auto"), run_dir)
             current_audio = enhanced
             print(f"Audio engine: {engine_used}")
+            cleanup_memory()
 
         # Step 5: Multi-Speaker Volume Balancing
         if getattr(args, "multi_speaker_balance", False) and meta["audio"]:
@@ -207,44 +215,47 @@ def process(args):
             balance_multispeaker_volume(current_audio, balanced, target_lufs=getattr(args, "target_lufs", -14.0), duration=timeline_duration)
             current_audio = balanced
 
-        # Step 6: Loudness Normalization (-14 LUFS)
-        if getattr(args, "normalize", False) and meta["audio"]:
-            log_step()
-            norm = run_dir / "normalized.wav"
-            loudness_normalize(current_audio, norm, getattr(args, "target_lufs", -14.0), duration=timeline_duration)
-            current_audio = norm
-
-        # Step 7: Studio Vocal Fine-Tuning & Mastering
+        # Step 6: Studio Vocal Fine-Tuning & Dynamics Mastering (before final loudness calibration)
         if meta["audio"] and (getattr(args, "audio_enhance", False) or getattr(args, "dereverb", False) or getattr(args, "normalize", False) or getattr(args, "multi_speaker_balance", False)):
             log_step()
             tuned = run_dir / "tuned.wav"
             voice_fine_tuning(current_audio, tuned, duration=timeline_duration)
             current_audio = tuned
 
-        # Step 8: Video Stabilization
+        # Step 7: Final Broadcast Loudness Normalization (-14 LUFS)
+        if getattr(args, "normalize", False) and meta["audio"]:
+            log_step()
+            norm = run_dir / "normalized.wav"
+            loudness_normalize(current_audio, norm, getattr(args, "target_lufs", -14.0), duration=timeline_duration)
+            current_audio = norm
+
+        # Step 8: Video Stabilization (with optional Single-Pass Real-BasicVSR Fusion)
+        run_fusion = getattr(args, "stabilize", False) and getattr(args, "video_enhance", False) and meta["video"]
+        fusion_done = False
+
         if getattr(args, "stabilize", False) and meta["video"]:
             if current_audio is None and meta["audio"]:
                 current_audio = run_dir / "audio_preserved.wav"
                 extract_audio(current_video, current_audio)
             log_step()
-            stabilized_video = run_dir / "video_stabilized.mp4"
+            target_out = run_dir / ("video_enhanced.mp4" if run_fusion else "video_stabilized.mp4")
             stab_engine = getattr(args, "stabilize_engine", "gpu")
-            stabilize_video(current_video, stabilized_video, timeline_duration, run_dir, engine=stab_engine)
-            current_video = stabilized_video
+            ok = stabilize_video(current_video, target_out, timeline_duration, run_dir, combine_enhance=run_fusion, engine=stab_engine)
+            if ok and target_out.exists() and target_out.stat().st_size > 1000:
+                current_video = target_out
+                if run_fusion:
+                    fusion_done = True
 
-        # Step 9: Video Enhancement (100% GPU Tensor Core Cinema Polish & Natural Sharpening)
-        if getattr(args, "video_enhance", False) and meta["video"]:
+        # Step 9: AI Video Enhancement (Native Real-BasicVSR Super-Resolution)
+        if getattr(args, "video_enhance", False) and meta["video"] and not fusion_done:
             if current_audio is None and meta["audio"]:
                 current_audio = run_dir / "audio_preserved.wav"
                 extract_audio(current_video, current_audio)
             log_step()
             enhanced_video = run_dir / "video_enhanced.mp4"
-            v_engine = getattr(args, "video_engine", "auto")
-            if v_engine == "vulkan":
-                success = enhance_video_ai_vulkan(current_video, enhanced_video, timeline_duration, meta)
-                if not success:
-                    enhance_video(current_video, enhanced_video, timeline_duration, meta)
-            else:
+            success = enhance_video_ai(current_video, enhanced_video, timeline_duration, meta)
+            if not success:
+                eprint("[VIDEO] Real-BasicVSR unavailable — falling back to GPU Tensor enhancement.")
                 enhance_video(current_video, enhanced_video, timeline_duration, meta)
             current_video = enhanced_video
 
@@ -292,8 +303,12 @@ def process(args):
         if getattr(args, "extract_thumbnails", False) and meta["video"]:
             target_thumb_dir = (out_dir / "thumbnails") if out_dir is not None else (run_dir / "thumbnails")
             target_thumb_dir.mkdir(parents=True, exist_ok=True)
-            log_step()
-            extract_best_thumbnails(current_video, target_thumb_dir, temp_dir=run_dir, duration=timeline_duration)
+            extract_best_thumbnails(
+                current_video, target_thumb_dir,
+                temp_dir=run_dir,
+                multi_speaker=getattr(args, "multi_speaker_balance", False),
+                duration=timeline_duration
+            )
 
         print("\n" + "=" * 64)
         if out_dir is not None:
@@ -403,7 +418,7 @@ def interactive():
             ("dereverb", "Echo & Reverb removal (Dereverberation)"),
             ("normalize", "Loudness normalization (-14 LUFS standard)"),
             ("stabilize", "Video Stabilization (GPU camera deshake)"),
-            ("video_enhance", "Video AI Enhancement (Real-ESRGAN GPU)"),
+            ("video_enhance", "Video AI Enhancement (Real-BasicVSR GPU)"),
             ("extract_thumbnails", "AI Expressive Thumbnail Generator"),
         ]
         for i, (k, label) in enumerate(items, 1):
@@ -484,8 +499,8 @@ def build_parser():
     p.add_argument("--normalize", action="store_true", help="EBU R128 loudness normalization")
     p.add_argument("--multi-speaker-balance", action="store_true", help="Equalize soft and loud speakers")
     p.add_argument("--stabilize", action="store_true", help="GPU video camera stabilization")
-    p.add_argument("--video-enhance", action="store_true", help="Video Enhancement (Fast GPU Tensor Cinema Polish)")
-    p.add_argument("--video-engine", choices=["auto", "tensor", "vulkan"], default="auto", help="Video engine: auto/tensor (fast natural cinema polish) or vulkan (RealESRGAN AI upscaler)")
+    p.add_argument("--video-enhance", action="store_true", help="Video Enhancement (Native Real-BasicVSR Super-Resolution)")
+    p.add_argument("--video-engine", choices=["auto", "realbasicvsr", "tensor"], default="auto", help="Video engine: auto/realbasicvsr (Real-BasicVSR VSR) or tensor (Fast GPU Tensor Cinema Polish)")
     p.add_argument("--extract-thumbnails", action="store_true", help="Extract best AI expressive thumbnails")
     p.add_argument("--all", action="store_true", help="Enable all features: auto-cut, audio enhance, dereverb, normalize, multi-speaker balance, stabilize, video polish, thumbnail extraction")
     p.add_argument("--engine", choices=["auto", "clearvoice", "voicefixer"], default="auto")

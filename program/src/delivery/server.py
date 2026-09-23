@@ -11,15 +11,41 @@ import http.server
 import socketserver
 import urllib.parse
 import threading
+import unicodedata
 from pathlib import Path
 
 
 def start_http_file_server(dst: Path, port: int = 8888) -> socketserver.ThreadingTCPServer:
     """Start a background HTTP server serving the output file with byte-range acceleration."""
     class _OneFileHandler(http.server.BaseHTTPRequestHandler):
+        def send_response(self, code, message=None):
+            if message is not None:
+                try:
+                    message = str(message).encode("latin-1").decode("latin-1")
+                except UnicodeEncodeError:
+                    message = str(message).encode("utf-8", "replace").decode("latin-1", "replace")
+            try:
+                super().send_response(code, message)
+            except UnicodeEncodeError:
+                super().send_response(code, "OK" if 200 <= code < 300 else "Error")
+
+        def send_error(self, code, message=None, explain=None):
+            try:
+                super().send_error(code, message, explain)
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                try:
+                    self.send_response(code, message)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(f"Error {code}: {message or 'Internal Error'}".encode("utf-8"))
+                except Exception:
+                    pass
+
         def do_HEAD(self):
-            req_path = urllib.parse.unquote(self.path).lstrip("/")
-            if req_path in ("", dst.name):
+            req_path = urllib.parse.unquote(urllib.parse.urlparse(self.path).path).lstrip("/")
+            req_path_norm = unicodedata.normalize("NFC", req_path)
+            dst_name_norm = unicodedata.normalize("NFC", dst.name)
+            if req_path_norm in ("", dst_name_norm) or req_path_norm.lower() == dst_name_norm.lower():
                 file_size = dst.stat().st_size
                 self.send_response(200)
                 self.send_header("Content-Type", "video/mp4" if dst.suffix.lower() == ".mp4" else "application/octet-stream")
@@ -30,8 +56,10 @@ def start_http_file_server(dst: Path, port: int = 8888) -> socketserver.Threadin
                 self.send_error(404, "Not found")
 
         def do_GET(self):
-            req_path = urllib.parse.unquote(self.path).lstrip("/")
-            if req_path in ("", dst.name):
+            req_path = urllib.parse.unquote(urllib.parse.urlparse(self.path).path).lstrip("/")
+            req_path_norm = unicodedata.normalize("NFC", req_path)
+            dst_name_norm = unicodedata.normalize("NFC", dst.name)
+            if req_path_norm in ("", dst_name_norm) or req_path_norm.lower() == dst_name_norm.lower():
                 try:
                     file_size = dst.stat().st_size
                     range_header = self.headers.get("Range")

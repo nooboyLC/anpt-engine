@@ -14,7 +14,7 @@ import shutil
 import contextlib
 from pathlib import Path
 
-from core.config import AI_CHUNK_SECONDS
+from core.config import AI_CHUNK_SECONDS, PROJECT_CHECKPOINTS, cleanup_memory
 from core.media_tools import ffmpeg_path, run, run_ffmpeg_with_progress
 from core.hardware import torch_cuda_available, gpu_status_text
 from core.logger import progress
@@ -41,7 +41,10 @@ def dereverb_with_voicefixer(src: Path, dst: Path):
     """VoiceFixer neural de-reverberation."""
     from voicefixer import VoiceFixer
     vf = VoiceFixer()
-    vf.restore(input=str(src), output=str(dst), cuda=torch_cuda_available(), mode=2)
+    use_cuda = torch_cuda_available()
+    vf.restore(input=str(src), output=str(dst), cuda=use_cuda, mode=2)
+    del vf
+    cleanup_memory()
     progress("[3/10] ECHO/REVERB", 1.0, "VoiceFixer de-reverberation complete")
 
 
@@ -79,7 +82,7 @@ def dereverb_audio(src: Path, dst: Path, engine: str, temp_dir: Path, duration: 
 
 def enhance_with_clearvoice(src: Path, dst: Path, temp_dir: Path):
     """Speech enhancement with ClearVoice MossFormer2."""
-    from core.config import PROJECT_CHECKPOINTS
+    cleanup_memory()
     import clearvoice
     if not getattr(clearvoice, "_antigravity_patched", False):
         _orig = clearvoice.network_wrapper.load_args_se
@@ -88,16 +91,45 @@ def enhance_with_clearvoice(src: Path, dst: Path, temp_dir: Path):
             self.args.checkpoint_dir = str(PROJECT_CHECKPOINTS / self.model_name)
         clearvoice.network_wrapper.load_args_se = _custom
         clearvoice._antigravity_patched = True
+
+    use_cuda = torch_cuda_available()
+    # Pass device at construction time — ClearVoice ≥0.1.2 accepts a device parameter
     with suppress_stdout_stderr():
-        cv = clearvoice.ClearVoice(task="speech_enhancement", model_names=["MossFormer2_SE_48K"])
+        try:
+            cv = clearvoice.ClearVoice(
+                task="speech_enhancement",
+                model_names=["MossFormer2_SE_48K"],
+                device="cuda" if use_cuda else "cpu",
+            )
+        except TypeError:
+            # Older ClearVoice version doesn't support the device kwarg — load without it
+            cv = clearvoice.ClearVoice(task="speech_enhancement", model_names=["MossFormer2_SE_48K"])
+
+    # Explicit post-init CUDA device enforcement (belt-and-suspenders for all versions)
+    dev_str = "CPU"
+    if use_cuda and cv.models:
+        try:
+            import torch
+            cuda_dev = torch.device("cuda")
+            cv.models[0].device = cuda_dev
+            cv.models[0].args.use_cuda = 1
+            if hasattr(cv.models[0], "model") and cv.models[0].model is not None:
+                cv.models[0].model.to(cuda_dev)
+                cv.models[0].model.eval()
+            dev_str = "CUDA:ON"
+        except Exception:
+            dev_str = "CPU"
+
     duration = wav_duration(src)
     chunks_dir = temp_dir / "ai_chunks"
     chunks_dir.mkdir(exist_ok=True)
     out_chunks = []
-    total_chunks = max(1, int(duration / AI_CHUNK_SECONDS) + (1 if duration % AI_CHUNK_SECONDS else 0))
+    # Dynamic audio chunk scaling: 60s for standard media, up to 120s for long recordings (>2h)
+    chunk_sec = min(120, max(AI_CHUNK_SECONDS, int(duration / 60))) if duration > 300 else AI_CHUNK_SECONDS
+    total_chunks = max(1, int(duration / chunk_sec) + (1 if duration % chunk_sec else 0))
 
-    for i, start in enumerate(range(0, int(duration + 0.999), AI_CHUNK_SECONDS)):
-        dur = min(AI_CHUNK_SECONDS, duration - start)
+    for i, start in enumerate(range(0, int(duration + 0.999), chunk_sec)):
+        dur = min(chunk_sec, duration - start)
         if dur <= 0:
             break
         inp = chunks_dir / f"in_{i:05d}.wav"
@@ -113,18 +145,23 @@ def enhance_with_clearvoice(src: Path, dst: Path, temp_dir: Path):
         inp.unlink(missing_ok=True)
         out_chunks.append(out)
         cur_pct = min(0.99, (i + 1) / total_chunks)
-        progress("[4/10] AI AUDIO", cur_pct, f"chunk {i+1}/{total_chunks} | {gpu_status_text()}")
+        progress("[4/10] AI AUDIO", cur_pct, f"chunk {i+1}/{total_chunks} | {dev_str} | {gpu_status_text()}")
 
     concat_audio_chunks(out_chunks, dst)
     shutil.rmtree(chunks_dir, ignore_errors=True)
-    progress("[4/10] AI AUDIO", 1.0, "ClearVoice complete")
+    del cv
+    cleanup_memory()
+    progress("[4/10] AI AUDIO", 1.0, f"ClearVoice complete ({dev_str})")
 
 
 def enhance_with_voicefixer(src: Path, dst: Path):
     """Speech restoration with VoiceFixer mode 0."""
     from voicefixer import VoiceFixer
     vf = VoiceFixer()
-    vf.restore(input=str(src), output=str(dst), cuda=torch_cuda_available(), mode=0)
+    use_cuda = torch_cuda_available()
+    vf.restore(input=str(src), output=str(dst), cuda=use_cuda, mode=0)
+    del vf
+    cleanup_memory()
     progress("[4/10] AI AUDIO", 1.0, "VoiceFixer complete")
 
 

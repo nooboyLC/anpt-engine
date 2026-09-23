@@ -49,3 +49,47 @@ TESTED ON:
   - Total runtime: 1h 35m 20s
 
 ================================================================
+
+Version: ufDvai-0.0.1
+Date   : 2026-09-23 (21:26)
+Status : Checkpoint — Unfinished Development on Video AI (উন্নয়ন সাময়িক বন্ধ)
+----------------------------------------------------------------
+SUMMARY:
+  Real-BasicVSR-ভিত্তিক Native AI Video Enhancement পাইপলাইনের
+  উন্নয়নের একটি চেকপয়েন্ট। GTX 1050 Ti (4GB VRAM)-এ proc resolution
+  সীমাবদ্ধতার কারণে HD সোর্স ভিডিওতে কোয়ালিটি উন্নতি প্রত্যাশামতো
+  হচ্ছিল না বিধায় এই পর্যায়ে কাজ থামিয়ে ট্র্যাক রাখা হচ্ছে।
+
+KEY CHANGES (D-0.0.1 থেকে):
+  - Real-ESRGAN Vulkan সরিয়ে Native PyTorch Real-BasicVSR যুক্ত
+      (Bidirectional Recurrent VSR, Optical Flow, CUDA FP16)
+  - GPU CUDA Phase Correlation Video Stabilizer (2-pass)
+  - Adaptive BLEND_FACTOR: VRAM + source resolution অনুযায়ী
+      (8GB+: 0.65 | 4GB+HD: 0.25 | 4GB+SD: 0.45 | <4GB: 0.20)
+  - SmartFrameJudge: anchor frame detection, 3-4x speed boost
+  - Dynamic aspect ratio: 16:9, 9:16, 4:3, 1:1 সব support
+  - hqdn3d pre-denoise filter (AI-র আগে compression noise remove)
+  - NVENC VBR bitrate tuned (-cq 22 -b:v 8M -maxrate 14M)
+  - Threading fix: media_tools.py-তে missing `import threading` যোগ
+  - Thumbnail: brightness/diversity filter + sequential naming
+  - clean.bat/sh: --venv, -v, -y flag support যোগ
+  - prefetch_models.py: duplicate header fix
+  - run.sh: set -e সরিয়ে explicit exit code handling
+  - setup.sh: step counter সংশোধন (7/7)
+  - AGENTS.md: mandatory full-depth audit protocol নিয়ম যোগ
+  - .gitignore: reports/ folder যোগ
+
+KNOWN LIMITATION (এই ভার্সনের মূল সীমাবদ্ধতা):
+  - GTX 1050 Ti (4GB VRAM)-এ Real-BasicVSR proc resolution মাত্র
+    544x312 — HD সোর্স (1080p) এ SR roundtrip quality নষ্ট করে।
+    8GB+ VRAM ছাড়া HD ভিডিওতে AI enhancement তেমন কার্যকর নয়।
+
+TESTED ON:
+  - Windows 11
+  - NVIDIA GeForce GTX 1050 Ti (4GB VRAM)
+  - Python 3.12.10 | CUDA 12.4 | PyTorch 2.6.0+cu124
+  - Test file: ~19 min Bengali video (Sheikh Hasina Homecoming QA)
+  - AI VIDEO step runtime: ~2h 26m (GTX 1050 Ti, ~3 fps)
+  - Output size: 772MB (~5.5 Mbps average)
+
+================================================================

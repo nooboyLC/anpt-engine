@@ -37,14 +37,33 @@ echo ""
 echo "Note: Output folder [output/] is ALWAYS kept safe and never touched."
 echo ""
 
-read -rp "Proceed with cleaning support folder and temporary files? (y/N): " CONFIRM
+DEL_VENV=""
+CONFIRM=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --venv|-v)
+            DEL_VENV="Y"
+            CONFIRM="Y"
+            ;;
+        -y|--yes)
+            CONFIRM="Y"
+            ;;
+    esac
+done
+
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "Cleanup cancelled."
-    exit 0
+    read -rp "Proceed with cleaning support folder and temporary files? (y/N): " CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo "Cleanup cancelled."
+        exit 0
+    fi
 fi
 
-echo ""
-read -rp "Also delete Python virtual environment (program/venv)? (y/N): " DEL_VENV
+if [[ -z "$DEL_VENV" ]]; then
+    echo ""
+    read -rp "Also delete Python virtual environment (program/venv)? (y/N): " DEL_VENV
+fi
 
 echo ""
 echo "Cleaning in progress..."

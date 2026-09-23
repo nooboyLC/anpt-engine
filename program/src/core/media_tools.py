@@ -13,6 +13,7 @@ import sys
 import json
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -145,6 +146,20 @@ def run_ffmpeg_with_progress(cmd: list[str], total_duration: float, label: str, 
         errors="replace",
     )
 
+    stderr_buffer: list[str] = []
+    def _stderr_reader():
+        try:
+            if proc.stderr:
+                for err_l in proc.stderr:
+                    stderr_buffer.append(err_l)
+                    if len(stderr_buffer) > 200:
+                        stderr_buffer.pop(0)
+        except Exception:
+            pass
+
+    t_err = threading.Thread(target=_stderr_reader, daemon=True)
+    t_err.start()
+
     out_time_us = 0
     speed_str = "1.0x"
     fps_str = "0"
@@ -179,8 +194,16 @@ def run_ffmpeg_with_progress(cmd: list[str], total_duration: float, label: str, 
                             last_update = now
 
         proc.wait()
+        t_err.join(timeout=2)
         if proc.returncode != 0:
-            err = proc.stderr.read() if proc.stderr else "Unknown error"
+            err = "".join(stderr_buffer).strip()
+            if not err:
+                code_unsigned = proc.returncode & 0xFFFFFFFF
+                err = f"Process terminated unexpectedly with exit code {proc.returncode} (0x{code_unsigned:08X})"
+                if code_unsigned == 0xC0000006:
+                    err += " [STATUS_IN_PAGE_ERROR: Storage drive I/O read failure]"
+                elif code_unsigned == 0xC0000005:
+                    err += " [STATUS_ACCESS_VIOLATION: Memory crash]"
             raise RuntimeError(f"FFmpeg error: {err}")
         progress(label, 1.0, f"done | {fmt_time(total_duration)}")
     except Exception:

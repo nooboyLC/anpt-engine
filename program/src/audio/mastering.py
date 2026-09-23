@@ -41,7 +41,7 @@ def loudness_normalize(src: Path, dst: Path, target: float = -14.0, duration: fl
         "-c:a", "pcm_s16le", str(dst)
     ]
     if duration > 0:
-        run_ffmpeg_with_progress(cmd, duration, "[6/10] LOUDNESS")
+        run_ffmpeg_with_progress(cmd, duration, "[7/10] LOUDNESS")
     else:
         run(cmd)
 
@@ -68,7 +68,7 @@ def voice_fine_tuning(src: Path, dst: Path, duration: float = 0):
         "-c:a", "pcm_s16le", str(dst)
     ]
     if duration > 0:
-        run_ffmpeg_with_progress(cmd, duration, "[7/10] FINE-TUNING")
+        run_ffmpeg_with_progress(cmd, duration, "[6/10] FINE-TUNING")
     else:
         run(cmd)
 
