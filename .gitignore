@@ -1,41 +1,73 @@
-# Python virtual environment — বড় ফাইল, track করার দরকার নেই
-program/venv/
+﻿# =============================================================================
+# Auto Cut & Polishing Tool - .gitignore
+# Project root: project_Auto Cut & Polishing Tool/
+# Program root: Auto Cut & Polishing Tool/
+# =============================================================================
 
+# -----------------------------------------------------------------------
+# Runtime support folder — all downloaded binaries, models, caches, temp
+# Located at: Auto Cut & Polishing Tool/support/
+# -----------------------------------------------------------------------
+Auto Cut & Polishing Tool/support/
+
+# -----------------------------------------------------------------------
+# Old locations (legacy - now cleaned up, keep here as safety net)
+# -----------------------------------------------------------------------
+Auto Cut & Polishing Tool/program/support/
+Auto Cut & Polishing Tool/program/venv/
+
+# -----------------------------------------------------------------------
 # Compiled Python files
+# -----------------------------------------------------------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# AI Models — H: drive-এ আলাদা আছে
-program/support/models/
-program/support/bin/realesrgan-ncnn-vulkan.exe
-
+# -----------------------------------------------------------------------
 # Output videos — processed results
-output/
+# -----------------------------------------------------------------------
+Auto Cut & Polishing Tool/output/
 
+# -----------------------------------------------------------------------
 # Temporary files
+# -----------------------------------------------------------------------
 *.tmp
 *.temp
 *.log
+hardware_log_*.csv
 
-# OS files
+# -----------------------------------------------------------------------
+# OS generated files
+# -----------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 desktop.ini
 
+# -----------------------------------------------------------------------
 # IDE files
+# -----------------------------------------------------------------------
 .vscode/
 .idea/
 *.suo
 *.user
 
-# Runtime support folder — all downloaded binaries, models, caches, and temp
-program/support/
-
-# Analysis/report files — not part of source tracking
-HARDWARE_AND_QUALITY_ANALYSIS_REPORT.md
+# -----------------------------------------------------------------------
+# Analysis / report files — not part of source tracking
+# -----------------------------------------------------------------------
+reports/
+HARDWARE_AND_QUALITY_ANALYSIS_REPORT*.md
+CODEBASE_ARCHITECTURE_GUIDE_RealBasicVSR_v2.md
 task.md
+checkpoints/
 
-# Compat DLLs - auto-installed by setup.bat
-program/src/core/compat_dlls/
+# -----------------------------------------------------------------------
+# Agent and AI assistant files — not tracked
+# -----------------------------------------------------------------------
+.agents/
+AGENTS.md
+
+# -----------------------------------------------------------------------
+# Compat DLLs — auto-installed by setup.bat
+# -----------------------------------------------------------------------
+Auto Cut & Polishing Tool/program/src/core/compat_dlls/
