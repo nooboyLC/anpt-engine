@@ -22,6 +22,13 @@ from pathlib import Path
 
 def find_site_packages(venv_dir: Path):
     """Return the site-packages directory inside the venv."""
+    import sysconfig
+    try:
+        purelib = Path(sysconfig.get_paths()["purelib"])
+        if purelib.is_dir():
+            return purelib
+    except Exception:
+        pass
     for candidate in venv_dir.glob("Lib/site-packages"):    # Windows
         if candidate.is_dir():
             return candidate
@@ -81,7 +88,7 @@ TARGETS = [
 
 
 def main():
-    venv_dir = Path(sys.executable).parent.parent  # .../venv/Scripts/python.exe -> .../venv
+    venv_dir = Path(sys.prefix)  # .../venv/Scripts/python.exe -> .../venv
     program_dir = Path(__file__).resolve().parent
     root_dir = program_dir.parent
     cache_path = (root_dir / "support" / "checkpoints" / "voicefixer").as_posix()

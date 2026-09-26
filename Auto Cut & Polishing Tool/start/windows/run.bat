@@ -3,7 +3,7 @@ setlocal EnableExtensions
 chcp 65001 >nul
 
 REM ============================================================
-REM Auto Cut & Polishing Tool — run.bat (Windows Launcher)
+REM Auto Cut & Polishing Tool - run.bat (Windows Launcher)
 REM Location: start\windows\run.bat
 REM This script is inside  start\windows\
 REM Program code is inside  ..\..\program\
@@ -11,8 +11,8 @@ REM ============================================================
 
 REM Resolve the root of the project (two levels up from this script)
 set "SCRIPT_DIR=%~dp0"
-set "ROOT_DIR=%SCRIPT_DIR%..\.."
-set "PROGRAM_DIR=%ROOT_DIR%\program"
+set "ROOT_DIR=%SCRIPT_DIR%..\..\"
+set "PROGRAM_DIR=%ROOT_DIR%program\"
 
 REM Normalize paths
 pushd "%PROGRAM_DIR%" 2>nul
@@ -24,7 +24,7 @@ if errorlevel 1 (
 set "PROGRAM_DIR=%CD%"
 popd
 
-pushd "%ROOT_DIR%"
+pushd "%ROOT_DIR%" 2>nul
 set "ROOT_DIR=%CD%"
 popd
 
@@ -32,8 +32,11 @@ set "SUPPORT_DIR=%ROOT_DIR%\support"
 set "VENV_DIR=%SUPPORT_DIR%\venv"
 
 REM ============================================================
-REM Runtime isolation — all runtime files go under support\
-REM Environment variables
+REM Runtime isolation - all runtime files go under support\
+REM Prepend support\bin to PATH so local FFmpeg and tools are always found
+REM ============================================================
+set "PATH=%SUPPORT_DIR%\bin;%PATH%"
+
 set "TMPDIR=%SUPPORT_DIR%\temp"
 set "TEMP=%SUPPORT_DIR%\temp"
 set "TMP=%SUPPORT_DIR%\temp"
@@ -53,8 +56,12 @@ set "MPLCONFIGDIR=%SUPPORT_DIR%\cache\matplotlib"
 set "VOICEFIXER_CACHE=%SUPPORT_DIR%\checkpoints\voicefixer"
 set "VOICEFIXER_HOME=%SUPPORT_DIR%\checkpoints\voicefixer"
 
+REM Redirect Python bytecode (__pycache__) to support\cache\pycache
+REM so program\ source folders are never polluted
+set "PYTHONPYCACHEPREFIX=%SUPPORT_DIR%\cache\pycache"
+
 REM ============================================================
-REM Find Python — prefer local venv created by setup.bat
+REM Find Python - prefer local venv created by setup.bat
 REM ============================================================
 if exist "%VENV_DIR%\Scripts\python.exe" (
     set "PY_CMD=%VENV_DIR%\Scripts\python.exe"
@@ -91,6 +98,7 @@ exit /b 1
 
 :run_app
 cd /d "%PROGRAM_DIR%"
+mkdir "%SUPPORT_DIR%\cache\pycache" >nul 2>&1
 "%PY_CMD%" "%PROGRAM_DIR%\main.py" %*
 
 if errorlevel 1 (

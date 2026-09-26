@@ -142,8 +142,22 @@ def check_system_dependencies() -> bool:
 
 
 def gpu_info() -> dict:
-    """Queries NVIDIA GPU state via nvidia-smi."""
+    """Queries NVIDIA GPU state via nvidia-smi (or Apple Metal MPS on macOS)."""
     info = {"available": False, "name": "", "vram_total": 0, "vram_used": 0, "util": 0}
+    if sys.platform == "darwin":
+        try:
+            import torch
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                info.update({
+                    "available": True,
+                    "name": "Apple Silicon GPU (Metal / MPS)",
+                    "vram_total": 0,
+                    "vram_used": 0,
+                    "util": 0,
+                })
+                return info
+        except Exception:
+            pass
     if not command_exists("nvidia-smi"):
         return info
     try:

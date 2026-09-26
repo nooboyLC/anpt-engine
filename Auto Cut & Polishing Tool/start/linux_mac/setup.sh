@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# AUTO SETUP (Linux / macOS / Google Colab) â€” Auto Cut & Polishing Tool
+# AUTO SETUP (Linux / macOS / Google Colab) — Auto Cut & Polishing Tool
 # Location: start/linux_mac/setup.sh
 # Program code is inside:  ../../program/
 # Everything installs ONLY inside support/venv and support/
 # =============================================================================
-
-set -e
 
 SCRIPT_PATH="$0"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -22,6 +20,7 @@ DIR="$(cd "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd)"
 ROOT_DIR="$(cd "$DIR/../.." >/dev/null 2>&1 && pwd)"
 PROGRAM_DIR="$ROOT_DIR/program"
 SUPPORT_DIR="$ROOT_DIR/support"
+VENV_DIR="$SUPPORT_DIR/venv"
 
 if [ ! -d "$PROGRAM_DIR" ]; then
     echo "[ERROR] Cannot find program/ folder at: $PROGRAM_DIR"
@@ -40,6 +39,7 @@ echo ""
 mkdir -p "$SUPPORT_DIR/temp"
 mkdir -p "$SUPPORT_DIR/checkpoints"
 mkdir -p "$SUPPORT_DIR/cache"
+mkdir -p "$SUPPORT_DIR/bin"
 
 export TMPDIR="$SUPPORT_DIR/temp"
 export TEMP="$SUPPORT_DIR/temp"
@@ -67,8 +67,7 @@ fi
 echo "[STEP 1/6] Found Python: $SYS_PYTHON"
 "$SYS_PYTHON" --version
 
-# 2. Virtual Environment inside support/venv (Strictly isolated, no system packages)
-VENV_DIR="$SUPPORT_DIR/venv"
+# 2. Virtual Environment inside support/venv (Strictly isolated)
 VENV_PY="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
 
@@ -77,12 +76,16 @@ if [ -f "$VENV_PY" ]; then
 else
     echo "[STEP 2/6] Creating isolated virtual environment in support/venv ..."
     if ! "$SYS_PYTHON" -m venv "$VENV_DIR" 2>/dev/null; then
-        "$SYS_PYTHON" -m venv --without-pip "$VENV_DIR"
+        "$SYS_PYTHON" -m venv --without-pip "$VENV_DIR" || true
     fi
     if [ ! -f "$VENV_PIP" ]; then
         curl -sSL https://bootstrap.pypa.io/get-pip.py -o "$SUPPORT_DIR/temp/get-pip.py"
-        "$VENV_PY" "$SUPPORT_DIR/temp/get-pip.py"
+        "$VENV_PY" "$SUPPORT_DIR/temp/get-pip.py" || true
         rm -f "$SUPPORT_DIR/temp/get-pip.py"
+    fi
+    if [ ! -f "$VENV_PY" ]; then
+        echo "[ERROR] Failed to create virtual environment."
+        exit 1
     fi
     echo "[OK] Virtual environment created."
 fi
@@ -90,7 +93,7 @@ fi
 # 3. Update pip
 echo ""
 echo "[STEP 3/6] Updating pip..."
-"$VENV_PIP" install --upgrade pip
+"$VENV_PIP" install --upgrade pip || echo "[WARN] pip upgrade warning ignored."
 
 # 4. Hardware Detection & Direct PyTorch Installation into support/venv
 echo ""
@@ -98,9 +101,9 @@ echo "[STEP 4/6] Detecting Hardware and Installing Packages..."
 
 OS_TYPE="$(uname -s)"
 if [ "$OS_TYPE" = "Darwin" ]; then
-    echo "[HARDWARE] macOS detected. Installing native PyTorch..."
+    echo "[HARDWARE] macOS detected. Installing native PyTorch (Metal/MPS)..."
     "$VENV_PIP" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision
-elif command -v nvidia-smi >/dev/null 2>&1; then
+elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
     echo "[HARDWARE] NVIDIA GPU Detected! Installing CUDA PyTorch..."
     "$VENV_PIP" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu124
 else
@@ -110,11 +113,14 @@ fi
 
 echo ""
 echo "[PACKAGES] Installing from requirements.txt..."
-"$VENV_PIP" install -r "$PROGRAM_DIR/requirements.txt"
+"$VENV_PIP" install -r "$PROGRAM_DIR/requirements.txt" || {
+    echo "[RETRY] Retrying requirements installation..."
+    "$VENV_PIP" install -r "$PROGRAM_DIR/requirements.txt"
+}
 
 # Patch voicefixer site-packages to redirect ~/.cache -> support/checkpoints
 echo "     [PATCH] Patching VoiceFixer library for isolation..."
-"$VENV_PY" "$PROGRAM_DIR/patch_packages.py"
+"$VENV_PY" "$PROGRAM_DIR/patch_packages.py" || echo "[WARN] patch_packages notice."
 
 # Ensure VoiceFixer checkpoint folder exists in project support dir
 VF_CACHE_DST="$SUPPORT_DIR/checkpoints/voicefixer"
@@ -127,8 +133,30 @@ echo ""
 echo "[STEP 5/6] Verifying FFmpeg multimedia engine..."
 if command -v ffmpeg >/dev/null 2>&1; then
     echo "     [OK] FFmpeg found: $(command -v ffmpeg)"
+elif [ -f "$SUPPORT_DIR/bin/ffmpeg" ]; then
+    echo "     [OK] Local FFmpeg found in support/bin"
 else
-    echo "     [WARN] FFmpeg not found in PATH. Please install FFmpeg (e.g. apt-get install -y ffmpeg / brew install ffmpeg)."
+    echo "     [INFO] FFmpeg not found in PATH. Attempting automatic download..."
+    if [ "$OS_TYPE" = "Linux" ]; then
+        # Download standalone static FFmpeg for Linux x86_64
+        ARCH="$(uname -m)"
+        if [ "$ARCH" = "x86_64" ]; then
+            echo "     [DOWNLOAD] Fetching static FFmpeg for Linux x86_64..."
+            curl -sSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o "$SUPPORT_DIR/temp/ffmpeg.tar.xz" 2>/dev/null || true
+            if [ -f "$SUPPORT_DIR/temp/ffmpeg.tar.xz" ]; then
+                tar -xf "$SUPPORT_DIR/temp/ffmpeg.tar.xz" -C "$SUPPORT_DIR/temp" 2>/dev/null || true
+                find "$SUPPORT_DIR/temp" -type f -name "ffmpeg" -exec cp {} "$SUPPORT_DIR/bin/" \; 2>/dev/null || true
+                find "$SUPPORT_DIR/temp" -type f -name "ffprobe" -exec cp {} "$SUPPORT_DIR/bin/" \; 2>/dev/null || true
+                chmod +x "$SUPPORT_DIR/bin/ffmpeg" "$SUPPORT_DIR/bin/ffprobe" 2>/dev/null || true
+                rm -rf "$SUPPORT_DIR/temp"/ffmpeg*
+            fi
+        fi
+    fi
+    if command -v ffmpeg >/dev/null 2>&1 || [ -f "$SUPPORT_DIR/bin/ffmpeg" ]; then
+        echo "     [OK] FFmpeg ready."
+    else
+        echo "     [WARN] Please install FFmpeg (apt-get install -y ffmpeg / brew install ffmpeg)."
+    fi
 fi
 
 # 6. Pre-download all AI model weights into support/checkpoints

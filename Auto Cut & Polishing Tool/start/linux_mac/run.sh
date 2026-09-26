@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Auto Cut & Polishing Tool — run.sh (Linux / macOS / Google Colab)
+# Auto Cut & Polishing Tool - run.sh (Linux / macOS / Google Colab)
 # Location: start/linux_mac/run.sh
 # Program code is inside:  ../../program/
 # =============================================================================
-
-set -e
 
 # Resolve symlinks to get the real script directory
 SCRIPT_PATH="$0"
@@ -31,7 +29,7 @@ fi
 
 cd "$PROGRAM_DIR"
 
-mkdir -p "$SUPPORT_DIR/temp" "$SUPPORT_DIR/checkpoints" "$SUPPORT_DIR/cache" 2>/dev/null || true
+mkdir -p "$SUPPORT_DIR/temp" "$SUPPORT_DIR/checkpoints" "$SUPPORT_DIR/cache/pycache" "$SUPPORT_DIR/bin" 2>/dev/null || true
 
 export TMPDIR="$SUPPORT_DIR/temp"
 export TEMP="$SUPPORT_DIR/temp"
@@ -53,7 +51,11 @@ export VOICEFIXER_CACHE="$SUPPORT_DIR/checkpoints/voicefixer"
 export VOICEFIXER_HOME="$SUPPORT_DIR/checkpoints/voicefixer"
 export PATH="$SUPPORT_DIR/bin:$PATH"
 
-# Find Python — prefer local venv
+# Redirect Python bytecode (__pycache__) to support/cache/pycache
+# so program/ source folders are never polluted
+export PYTHONPYCACHEPREFIX="$SUPPORT_DIR/cache/pycache"
+
+# Find Python - prefer local venv
 PY_CMD=""
 if [ -f "$SUPPORT_DIR/venv/bin/python" ]; then
     PY_CMD="$SUPPORT_DIR/venv/bin/python"
@@ -70,4 +72,11 @@ if [ -z "$PY_CMD" ]; then
     exit 1
 fi
 
-exec "$PY_CMD" "$PROGRAM_DIR/main.py" "$@"
+"$PY_CMD" "$PROGRAM_DIR/main.py" "$@"
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "[EXIT] Program finished with code $EXIT_CODE"
+fi
+exit $EXIT_CODE

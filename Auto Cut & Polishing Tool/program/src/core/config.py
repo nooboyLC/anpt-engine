@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 core.config
 -----------
@@ -34,6 +34,11 @@ PROJECT_CHECKPOINTS = SUPPORT_DIR / "checkpoints"
 PROJECT_CACHE       = SUPPORT_DIR / "cache"
 PROJECT_USERBASE    = SUPPORT_DIR / "py_userbase"
 BIN_DIR             = SUPPORT_DIR / "bin"
+
+# Prepend BIN_DIR to system PATH so FFmpeg, FFprobe, and Real-ESRGAN are globally accessible
+_bin_str = str(BIN_DIR)
+if _bin_str not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _bin_str + os.pathsep + os.environ.get("PATH", "")
 PYCACHE_DIR         = PROJECT_CACHE / "pycache"
 
 # Centralize Python bytecode (__pycache__) so source folders are never polluted

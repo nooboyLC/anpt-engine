@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 delivery.muxer
 --------------
@@ -43,8 +43,6 @@ def build_output_suffix(args, meta: dict | None = None) -> str:
         tags.append("AudioEnhanced")
     elif getattr(args, "video_enhance", False):
         tags.append("VideoEnhanced")
-    if getattr(args, "video_ai", False):
-        tags.append("RealESRGAN")
     if getattr(args, "dereverb", False):
         tags.append("EchoRemoved")
     if getattr(args, "stabilize", False):

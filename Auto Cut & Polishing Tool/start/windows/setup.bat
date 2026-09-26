@@ -1,8 +1,9 @@
 @echo off
 setlocal EnableExtensions
+chcp 65001 >nul
 
 REM ============================================================
-REM Auto Cut & Polishing Tool â€” setup.bat (Windows)
+REM Auto Cut & Polishing Tool - setup.bat (Windows)
 REM Location: start\windows\setup.bat
 REM Program code is inside  ..\..\program\
 REM ============================================================
@@ -28,7 +29,7 @@ set "SUPPORT_DIR=%ROOT_DIR%\support"
 set "VENV_DIR=%SUPPORT_DIR%\venv"
 
 echo ================================================================
-echo   AUTO SETUP (Windows) â€” Auto Cut ^& Polishing Tool
+echo   AUTO SETUP (Windows) - Auto Cut ^& Polishing Tool
 echo   Program folder : "%PROGRAM_DIR%"
 echo   Root folder    : "%ROOT_DIR%"
 echo   Support folder : "%SUPPORT_DIR%"
@@ -38,7 +39,11 @@ echo.
 
 if not exist "%SUPPORT_DIR%"            mkdir "%SUPPORT_DIR%"
 if not exist "%SUPPORT_DIR%\temp"       mkdir "%SUPPORT_DIR%\temp"
+if not exist "%SUPPORT_DIR%\checkpoints" mkdir "%SUPPORT_DIR%\checkpoints"
+if not exist "%SUPPORT_DIR%\cache"       mkdir "%SUPPORT_DIR%\cache"
+if not exist "%SUPPORT_DIR%\bin"         mkdir "%SUPPORT_DIR%\bin"
 
+set "PATH=%SUPPORT_DIR%\bin;%PATH%"
 set "TMPDIR=%SUPPORT_DIR%\temp"
 set "TEMP=%SUPPORT_DIR%\temp"
 set "TMP=%SUPPORT_DIR%\temp"

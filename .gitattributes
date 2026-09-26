@@ -1,0 +1,38 @@
+﻿# =============================================================================
+# Auto Cut & Polishing Tool - Git Line Ending & Cross-Platform Normalization
+# =============================================================================
+
+# Default text files
+* text=auto
+
+# Shell scripts MUST have LF line endings to run on Linux / macOS / Colab
+*.sh text eol=lf
+
+# Windows batch files MUST have CRLF line endings
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Python source code
+*.py text eol=lf diff=python
+*.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binaries
+*.dll binary
+*.so binary
+*.dylib binary
+*.exe binary
+*.bin binary
+*.pt binary
+*.pth binary
+*.ckpt binary
+*.zip binary
+*.tar.xz binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.mp4 binary
+*.wav binary
