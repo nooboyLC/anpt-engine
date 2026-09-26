@@ -18,7 +18,7 @@ REM Normalize paths
 pushd "%PROGRAM_DIR%" 2>nul
 if errorlevel 1 (
     echo [ERROR] Cannot find program\ folder. Expected at: %PROGRAM_DIR%
-    pause
+    if not "%NON_INTERACTIVE%"=="1" pause
     exit /b 1
 )
 set "PROGRAM_DIR=%CD%"
@@ -93,7 +93,7 @@ echo  [ERROR] Python / Virtual Environment not found!
 echo  Please run "start\windows\setup.bat" first.
 echo ================================================================
 echo.
-pause
+if not "%NON_INTERACTIVE%"=="1" pause
 exit /b 1
 
 :run_app
@@ -104,5 +104,5 @@ mkdir "%SUPPORT_DIR%\cache\pycache" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo [EXIT] Program exited with an error code.
-    pause
+    if not "%NON_INTERACTIVE%"=="1" pause
 )

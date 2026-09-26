@@ -8,6 +8,7 @@ GPU telemetry, CUDA, Vulkan, and universal hardware video encoder auto-negotiati
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 import shutil
 from pathlib import Path
