@@ -19,6 +19,16 @@ import os
 import re
 from pathlib import Path
 
+# Centralize Python bytecode (__pycache__) into support/cache/pycache/
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+_PYCACHE_DIR = _ROOT_DIR / "support" / "cache" / "pycache"
+try:
+    _PYCACHE_DIR.mkdir(parents=True, exist_ok=True)
+    sys.pycache_prefix = str(_PYCACHE_DIR)
+    os.environ["PYTHONPYCACHEPREFIX"] = str(_PYCACHE_DIR)
+except Exception:
+    pass
+
 
 def find_site_packages(venv_dir: Path):
     """Return the site-packages directory inside the venv."""

@@ -15,7 +15,7 @@ set "PROGRAM_DIR=%ROOT_DIR%\program"
 pushd "%PROGRAM_DIR%" 2>nul
 if errorlevel 1 (
     echo [ERROR] Cannot find program\ folder. Expected at: %PROGRAM_DIR%
-    pause
+    if not "%NON_INTERACTIVE%"=="1" pause
     exit /b 1
 )
 set "PROGRAM_DIR=%CD%"
@@ -41,6 +41,7 @@ if not exist "%SUPPORT_DIR%"            mkdir "%SUPPORT_DIR%"
 if not exist "%SUPPORT_DIR%\temp"       mkdir "%SUPPORT_DIR%\temp"
 if not exist "%SUPPORT_DIR%\checkpoints" mkdir "%SUPPORT_DIR%\checkpoints"
 if not exist "%SUPPORT_DIR%\cache"       mkdir "%SUPPORT_DIR%\cache"
+if not exist "%SUPPORT_DIR%\cache\pycache" mkdir "%SUPPORT_DIR%\cache\pycache"
 if not exist "%SUPPORT_DIR%\bin"         mkdir "%SUPPORT_DIR%\bin"
 
 set "PATH=%SUPPORT_DIR%\bin;%PATH%"
@@ -52,6 +53,7 @@ set "TORCH_HOME=%SUPPORT_DIR%\checkpoints"
 set "HF_HOME=%SUPPORT_DIR%\checkpoints"
 set "VOICEFIXER_CACHE=%SUPPORT_DIR%\checkpoints\voicefixer"
 set "VOICEFIXER_HOME=%SUPPORT_DIR%\checkpoints\voicefixer"
+set "PYTHONPYCACHEPREFIX=%SUPPORT_DIR%\cache\pycache"
 
 REM 1. Find Python
 set "SYS_PYTHON="
@@ -71,7 +73,7 @@ if not defined SYS_PYTHON (
 
 if not defined SYS_PYTHON (
     echo [ERROR] Python 3 not found. Please install Python 3.10+ from python.org.
-    pause
+    if not "%NON_INTERACTIVE%"=="1" pause
     exit /b 1
 )
 
@@ -89,7 +91,7 @@ if exist "%VENV_PY%" (
     %SYS_PYTHON% -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment.
-        pause
+        if not "%NON_INTERACTIVE%"=="1" pause
         exit /b 1
     )
     echo [OK] Virtual environment created.

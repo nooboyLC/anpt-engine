@@ -16,6 +16,17 @@ Usage (called by setup.bat / setup.sh automatically):
 
 import sys
 import os
+from pathlib import Path
+
+# Centralize Python bytecode (__pycache__) into support/cache/pycache/
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+_PYCACHE_DIR = _ROOT_DIR / "support" / "cache" / "pycache"
+try:
+    _PYCACHE_DIR.mkdir(parents=True, exist_ok=True)
+    sys.pycache_prefix = str(_PYCACHE_DIR)
+    os.environ["PYTHONPYCACHEPREFIX"] = str(_PYCACHE_DIR)
+except Exception:
+    pass
 
 # Make sure config is loaded first so environment variables (TORCH_HOME, HF_HOME, etc.)
 # are set before any model download begins.
@@ -89,8 +100,7 @@ def _monkey_patch_voicefixer():
     from pathlib import Path
     
     # Unconditional isolated path inside the project
-    program_dir = Path(__file__).resolve().parent
-    vf_cache = str(program_dir / "support" / "checkpoints" / "voicefixer").replace("\\", "/")
+    vf_cache = str(PROJECT_CHECKPOINTS / "voicefixer").replace("\\", "/")
 
     try:
         import voicefixer.vocoder.config as _vcfg

@@ -38,7 +38,7 @@ echo ""
 
 mkdir -p "$SUPPORT_DIR/temp"
 mkdir -p "$SUPPORT_DIR/checkpoints"
-mkdir -p "$SUPPORT_DIR/cache"
+mkdir -p "$SUPPORT_DIR/cache/pycache"
 mkdir -p "$SUPPORT_DIR/bin"
 
 export TMPDIR="$SUPPORT_DIR/temp"
@@ -49,6 +49,7 @@ export TORCH_HOME="$SUPPORT_DIR/checkpoints"
 export HF_HOME="$SUPPORT_DIR/checkpoints"
 export VOICEFIXER_CACHE="$SUPPORT_DIR/checkpoints/voicefixer"
 export VOICEFIXER_HOME="$SUPPORT_DIR/checkpoints/voicefixer"
+export PYTHONPYCACHEPREFIX="$SUPPORT_DIR/cache/pycache"
 export PATH="$SUPPORT_DIR/bin:$PATH"
 
 # 1. Find Python
