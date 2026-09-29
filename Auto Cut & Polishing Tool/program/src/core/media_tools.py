@@ -333,7 +333,7 @@ def sanitize_title(title: str, max_chars: int = 55) -> str:
 
 
 def download_url(url: str, save_dir: Path, suffix: str = "_Unedited_Raw", temp_dir: Path | None = None) -> Path:
-    """Downloads video or audio from URL using yt-dlp."""
+    """Downloads video or audio from URL using yt-dlp with a single unified progress bar."""
     try:
         import yt_dlp
     except ImportError as exc:
@@ -354,16 +354,36 @@ def download_url(url: str, save_dir: Path, suffix: str = "_Unedited_Raw", temp_d
     safe_title = sanitize_title(raw_title)
     out_tmpl = str(save_dir / f"{safe_title}{suffix}.%(ext)s")
 
-    def hook(d):
-        if d["status"] == "downloading":
-            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-            downloaded = d.get("downloaded_bytes", 0)
-            pct = downloaded / total if total > 0 else 0.0
-            spd = d.get("speed") or 0
-            spd_str = f"{spd / (1024 * 1024):.1f} MB/s" if spd else ""
-            progress("[DOWNLOADING]", pct, spd_str)
-        elif d["status"] == "finished":
-            progress("[DOWNLOADING]", 1.0, "Complete")
+    # Unified Single-Bar Download:
+    # yt-dlp downloads video + audio as separate streams internally (like IDM multi-part).
+    # We accumulate bytes from ALL streams into one shared counter and show ONE clean bar.
+    import threading as _th
+    _lock = _th.Lock()
+    _total = [0]    # total_bytes across all streams
+    _done = [0]     # downloaded_bytes across all streams
+    _stream_totals: dict[str, int] = {}   # per stream_id totals
+    _stream_done: dict[str, int] = {}     # per stream_id downloaded
+
+    def hook(d: dict):
+        sid = d.get("tmpfilename") or d.get("filename") or "main"
+        status = d.get("status")
+        with _lock:
+            if status == "downloading":
+                this_total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+                this_done = int(d.get("downloaded_bytes") or 0)
+                if sid not in _stream_totals and this_total > 0:
+                    _stream_totals[sid] = this_total
+                    _total[0] = sum(_stream_totals.values())
+                _stream_done[sid] = this_done
+                combined_done = sum(_stream_done.values())
+                combined_total = _total[0]
+                pct = (combined_done / combined_total) if combined_total > 0 else 0.0
+                spd = d.get("speed") or 0
+                spd_str = f"{spd / (1024 * 1024):.1f} MB/s" if spd else ""
+                from core.logger import progress as _prog
+                _prog("[DOWNLOADING]", min(pct, 0.99), spd_str)
+            elif status == "finished":
+                pass  # Don't print 100% until final mux is done
 
     ydl_opts = {
         "outtmpl": out_tmpl,
@@ -377,8 +397,12 @@ def download_url(url: str, save_dir: Path, suffix: str = "_Unedited_Raw", temp_d
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
+    from core.logger import progress as _prog
+    _prog("[DOWNLOADING]", 1.0, "Complete")
+
     for f in save_dir.glob(f"{safe_title}{suffix}.*"):
         if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl"):
             return f
 
     raise RuntimeError(f"Download completed but output file not found in {save_dir}")
+

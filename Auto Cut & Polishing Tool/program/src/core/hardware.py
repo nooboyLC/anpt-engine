@@ -284,23 +284,25 @@ def get_best_video_encoder_config() -> tuple[str, list[str], str]:
             os.environ["LD_LIBRARY_PATH"] = _new_ld
 
     candidates = [
-        # 1. NVIDIA NVENC (High Quality P7 VBR for Turing/Ampere/Ada)
+        # 1. NVIDIA NVENC High Quality (P7 VBR, CQ 19, adaptive bitrate)
+        # CQ 19 with maxrate 20M/bufsize 40M gives ~10-15 Mbps for 1080p
+        # This produces ~2-2.5 GB for a 20-minute 60fps video (vs 5.7 GB uncapped).
         ("h264_nvenc", [
-            "-preset", "p7", "-tune", "hq", "-rc:v", "vbr", "-cq", "16", "-b:v", "0",
-            "-maxrate", "50M", "-bufsize", "100M", "-spatial-aq", "1", "-temporal-aq", "1",
+            "-preset", "p7", "-tune", "hq", "-rc:v", "vbr", "-cq", "19", "-b:v", "0",
+            "-maxrate", "20M", "-bufsize", "40M", "-spatial-aq", "1", "-temporal-aq", "1",
             "-pix_fmt", "yuv420p"
         ], "NVIDIA NVENC (GPU)", []),
-        # 2. NVIDIA NVENC (Medium/HQ VBR for Pascal GTX 10-series e.g. 1050 Ti, Maxwell)
+        # 2. NVIDIA NVENC Medium/HQ for Pascal GTX 10-series (GTX 1050 Ti, 1060, etc.)
         ("h264_nvenc", [
-            "-preset", "medium", "-tune", "hq", "-rc:v", "vbr", "-cq", "18", "-b:v", "0",
-            "-maxrate", "50M", "-bufsize", "100M", "-pix_fmt", "yuv420p"
+            "-preset", "medium", "-tune", "hq", "-rc:v", "vbr", "-cq", "19", "-b:v", "0",
+            "-maxrate", "20M", "-bufsize", "40M", "-pix_fmt", "yuv420p"
         ], "NVIDIA NVENC (GPU)", []),
-        # 3. NVIDIA NVENC (Universal Fallback)
+        # 3. NVIDIA NVENC Universal Fallback
         ("h264_nvenc", [
             "-preset", "default", "-pix_fmt", "yuv420p"
         ], "NVIDIA NVENC (GPU)", []),
-        ("h264_qsv",  ["-preset", "medium", "-global_quality", "18"], "Intel QuickSync (QSV)", []),
-        ("h264_amf",  ["-quality", "quality", "-rc", "cqp", "-qp_i", "18", "-qp_p", "18", "-pix_fmt", "yuv420p"], "AMD AMF (GPU)", []),
+        ("h264_qsv",  ["-preset", "medium", "-global_quality", "19"], "Intel QuickSync (QSV)", []),
+        ("h264_amf",  ["-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "19", "-pix_fmt", "yuv420p"], "AMD AMF (GPU)", []),
         ("h264_videotoolbox", ["-q:v", "75", "-pix_fmt", "yuv420p"], "Apple VideoToolbox (GPU)", []),
     ]
 

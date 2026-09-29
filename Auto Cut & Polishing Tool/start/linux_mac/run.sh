@@ -55,20 +55,18 @@ export PATH="$SUPPORT_DIR/bin:$PATH"
 # so program/ source folders are never polluted
 export PYTHONPYCACHEPREFIX="$SUPPORT_DIR/cache/pycache"
 
-# Find Python - prefer local venv
+# Find Python - strictly require local venv created by setup.sh
 PY_CMD=""
 if [ -f "$SUPPORT_DIR/venv/bin/python" ]; then
     PY_CMD="$SUPPORT_DIR/venv/bin/python"
 elif [ -f "$SUPPORT_DIR/venv/bin/python3" ]; then
     PY_CMD="$SUPPORT_DIR/venv/bin/python3"
-elif command -v python3 >/dev/null 2>&1; then
-    PY_CMD="python3"
-elif command -v python >/dev/null 2>&1; then
-    PY_CMD="python"
 fi
 
 if [ -z "$PY_CMD" ]; then
-    echo "[ERROR] Python not found. Run start/linux_mac/setup.sh first."
+    echo "[ERROR] Local Virtual Environment not found!"
+    echo "Expected at: $SUPPORT_DIR/venv/bin/python"
+    echo "Please run start/linux_mac/setup.sh first."
     exit 1
 fi
 

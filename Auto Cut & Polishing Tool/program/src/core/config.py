@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 core.config
 -----------
@@ -87,7 +87,7 @@ CHANNELS = 1
 SAMPLE_WIDTH = 2
 VAD_RATE = 16_000
 VAD_CHUNK_SECONDS = 30
-AI_CHUNK_SECONDS = 10
+AI_CHUNK_SECONDS = 60
 
 # Audio Silence Presets
 SILENCE_PRESETS = {

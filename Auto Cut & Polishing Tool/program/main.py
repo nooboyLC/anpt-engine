@@ -244,14 +244,9 @@ def process(args):
             # This eliminates the Step 9 decode->enhance->encode cycle (~25 min saved).
             _do_enhance = getattr(args, "video_enhance", False) and meta["video"]
             _fused = _do_enhance and torch_cuda_available() and stab_engine != "cpu"
-            if _fused:
-                # Pre-build the adaptive recipe and cache it on the stabilizer function
-                # so the fused loop can pick it up without re-profiling the video.
-                from video.enhancer_filter import profile_video_quality, get_adaptive_recipe
-                _fused_profile = profile_video_quality(current_video, timeline_duration, meta)
-                from video.stabilizer import _stabilize_gpu_cuda
-                _stabilize_gpu_cuda._fused_profile = _fused_profile
-                _stabilize_gpu_cuda._fused_recipe = None  # force fresh build from profile
+            # Note: the new memory-safe stabilizer builds the cinema recipe internally
+            # when combine_enhance=True via get_adaptive_recipe(None). No attribute
+            # injection needed -- the old _fused_profile/_fused_recipe pattern is removed.
             stabilize_video(current_video, stabilized_video, timeline_duration, run_dir,
                             combine_enhance=_fused, engine=stab_engine)
             current_video = stabilized_video

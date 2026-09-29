@@ -122,14 +122,28 @@ def upload_to_gofile(dst: Path) -> str | None:
 
 
 def upload_to_tmpfiles(dst: Path) -> str | None:
-    """Uploads file to tmpfiles.org for instant 1-click direct download with live progress."""
+    """Uploads file to tmpfiles.org for instant 1-click direct download with live progress.
+    Skipped for files > 3 GB (tmpfiles.org has unreliable large-file handling).
+    Hard timeout of 120s prevents hanging when server is slow or unresponsive.
+    """
+    # Safety caps: skip large files and use a strict timeout
+    _SIZE_LIMIT_GB = 3
+    _UPLOAD_TIMEOUT_S = 120
+    try:
+        file_gb = dst.stat().st_size / (1024 ** 3)
+        if file_gb > _SIZE_LIMIT_GB:
+            print(f"[UPLOAD] tmpfiles.org skipped — file size {file_gb:.1f} GB exceeds {_SIZE_LIMIT_GB} GB cap.")
+            return None
+    except Exception:
+        pass
+
     _last_error = ""
     try:
         print("[UPLOAD] Uploading to high-speed direct CDN (tmpfiles.org)...")
         import requests
         reader = TqdmFileReader(dst, desc="[UPLOAD]")
         try:
-            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": (dst.name, reader)}, timeout=3600)
+            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": (dst.name, reader)}, timeout=_UPLOAD_TIMEOUT_S)
             if r.status_code == 200:
                 res = r.json()
                 if res.get("status") == "success":
@@ -188,11 +202,15 @@ def trigger_file_download(dst: Path):
         threading.Thread(target=_trigger_colab, daemon=True).start()
 
     # 4. High-Speed Cloud CDNs (Gofile & TmpFiles) for shareable link
+    # Smart CDN: Only try tmpfiles.org if Gofile failed — never upload the same big file twice.
     t_upload_start = time.time()
     try:
         cloud_url = upload_to_gofile(dst)
         if not cloud_url:
+            # Gofile failed — try tmpfiles.org as fallback (with size cap + timeout)
             cloud_url = upload_to_tmpfiles(dst)
+        else:
+            print("[UPLOAD] Gofile succeeded — skipping backup CDN upload.")
         upload_elapsed = time.time() - t_upload_start
 
         if cloud_url:
