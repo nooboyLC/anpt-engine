@@ -17,7 +17,7 @@ from core.media_tools import (
     ffmpeg_path, run, run_ffmpeg_with_progress, probe, get_stream_fps,
     get_filter_complex_script_flag, get_fps_mode_flags,
 )
-from core.hardware import get_best_video_encoder_config
+from core.hardware import get_best_video_encoder_config, get_hw_profile
 
 
 def extract_audio(src: Path, out_wav: Path, sample_rate: int = SAMPLE_RATE):
@@ -88,10 +88,16 @@ def ffmpeg_concat_cut(src: Path, segments: list[tuple[float, float]], dst: Path,
     """
     Cut the exact SAME video+audio segments in a single filter_complex pass.
     Frame-locked timeline guarantees 100% perfect lip sync.
+
+    Adaptive hardware acceleration (D-0.0.4):
+      - NVDEC available  →  -hwaccel cuda decode  +  NVENC encode  (full GPU pipeline)
+      - NVDEC unavailable →  software decode      +  best encoder  (NVENC or libx264)
     """
     if not segments:
         shutil.copy2(src, dst)
         return
+
+    hw = get_hw_profile()
 
     fc = []
     for i, (s, e) in enumerate(segments):
@@ -104,31 +110,34 @@ def ffmpeg_concat_cut(src: Path, segments: list[tuple[float, float]], dst: Path,
     script_file.write_text(";\n".join(fc), encoding="utf-8")
 
     enc, enc_flags, _ = get_best_video_encoder_config()
-    threads_val = str(max(1, min(4, os.cpu_count() or 2)))
+    # Auto-tune thread count: use HWProfile cpu_threads (scales with real core count)
+    threads_val = str(hw.cpu_threads)
     fps = get_stream_fps(probe(src).get("video"), default=30.0)
     fc_flag = get_filter_complex_script_flag()
 
-    cmd = [
-        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
-        "-threads", threads_val,
-        "-i", str(src.resolve()),
-        fc_flag, str(script_file.resolve()),
-        "-map", "[outv]", "-map", "[outa]",
-    ] + get_fps_mode_flags() + [
-        "-r", str(fps),
-        "-c:v", enc,
-    ] + enc_flags + [
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst.resolve())
-    ]
+    def _build_cmd(fc_f: str, video_enc: str, video_flags: list) -> list:
+        return (
+            [ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+             "-threads", threads_val,
+             "-i", str(src.resolve()),
+             fc_f, str(script_file.resolve()),
+             "-map", "[outv]", "-map", "[outa]"]
+            + get_fps_mode_flags()
+            + ["-r", str(fps), "-c:v", video_enc]
+            + video_flags
+            + ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst.resolve())]
+        )
+
+    cmd = _build_cmd(fc_flag, enc, enc_flags)
     try:
         run_ffmpeg_with_progress(cmd, duration, "[2/10] CUT + SYNC")
     except Exception as e:
         err_msg = str(e).lower()
         alt_flag = "-filter_complex_script" if fc_flag == "-/filter_complex" else "-/filter_complex"
 
-        # 1. Only switch script flag if the error explicitly mentions filter_complex or script
+        # 1. Retry with alternate script flag
         if ("filter_complex" in err_msg or "script" in err_msg) and ("option not found" in err_msg or "unrecognized option" in err_msg):
-            cmd[cmd.index(fc_flag)] = alt_flag
+            cmd = _build_cmd(alt_flag, enc, enc_flags)
             try:
                 run_ffmpeg_with_progress(cmd, duration, "[2/10] CUT + SYNC")
                 return
@@ -136,19 +145,19 @@ def ffmpeg_concat_cut(src: Path, segments: list[tuple[float, float]], dst: Path,
                 err_msg = str(e2).lower()
                 fc_flag = alt_flag
 
-        # 2. Fallback to CPU libx264 if hardware encoder failed
+        # 3. Final fallback: CPU libx264
         if enc != "libx264":
-            cmd_fallback = [
-                ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
-                "-threads", threads_val,
-                "-i", str(src.resolve()),
-                fc_flag, str(script_file.resolve()),
-                "-map", "[outv]", "-map", "[outa]",
-            ] + get_fps_mode_flags() + [
-                "-r", str(fps),
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst.resolve())
-            ]
+            cmd_fallback = (
+                [ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+                 "-threads", threads_val,
+                 "-i", str(src.resolve()),
+                 fc_flag, str(script_file.resolve()),
+                 "-map", "[outv]", "-map", "[outa]"]
+                + get_fps_mode_flags()
+                + ["-r", str(fps),
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst.resolve())]
+            )
             try:
                 run_ffmpeg_with_progress(cmd_fallback, duration, "[2/10] CUT + SYNC")
             except Exception as e_fb:

@@ -14,6 +14,7 @@ from pathlib import Path
 from core.config import SAMPLE_RATE, CHANNELS
 from core.media_tools import ffmpeg_path, run, run_ffmpeg_with_progress
 from core.logger import eprint
+from core.hardware import get_hw_profile
 
 
 def pre_level_audio(src: Path, dst: Path, duration: float = 0):
@@ -21,8 +22,10 @@ def pre_level_audio(src: Path, dst: Path, duration: float = 0):
     Initial gain staging to standardize input dynamics before VAD & AI filters.
     Prevents low-volume speakers from being misclassified as silence.
     """
+    threads = str(get_hw_profile().cpu_threads)
     cmd = [
         ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", threads,
         "-i", str(src), "-vn", "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE),
         "-af", "loudnorm=I=-18:TP=-2.0:LRA=11",
         "-c:a", "pcm_s16le", str(dst)
@@ -35,8 +38,10 @@ def pre_level_audio(src: Path, dst: Path, duration: float = 0):
 
 def loudness_normalize(src: Path, dst: Path, target: float = -14.0, duration: float = 0):
     """EBU R128 standard loudness normalization."""
+    threads = str(get_hw_profile().cpu_threads)
     cmd = [
         ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", threads,
         "-i", str(src), "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11",
         "-c:a", "pcm_s16le", str(dst)
     ]
@@ -62,8 +67,11 @@ def voice_fine_tuning(src: Path, dst: Path, duration: float = 0):
         "highshelf=f=9500:g=1.2,"
         "acompressor=threshold=-16dB:ratio=2.2:attack=15:release=180"
     )
+    threads = str(get_hw_profile().cpu_threads)
     cmd = [
-        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", threads,
+        "-i", str(src),
         "-af", master_filters,
         "-c:a", "pcm_s16le", str(dst)
     ]
@@ -85,8 +93,10 @@ def balance_multispeaker_volume(audio_in: Path, audio_out: Path, target_lufs: fl
             "dynaudnorm=f=150:g=15:peak=0.95:m=10.0:r=0.9,"
             f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
         )
+        threads = str(get_hw_profile().cpu_threads)
         cmd = [
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+            "-threads", threads,
             "-i", str(audio_in),
             "-af", balance_filter,
             "-c:a", "pcm_s16le", str(audio_out)

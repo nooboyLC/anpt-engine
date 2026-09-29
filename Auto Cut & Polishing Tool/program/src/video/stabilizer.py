@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -48,7 +50,7 @@ from core.media_tools import (
     ffmpeg_path, probe, run_ffmpeg_with_progress,
     get_stream_fps, get_fps_mode_flags,
 )
-from core.hardware import get_best_video_encoder_config, gpu_info, torch_cuda_available
+from core.hardware import get_best_video_encoder_config, gpu_info, torch_cuda_available, get_hw_profile
 from core.logger import progress, eprint
 
 # Constants
@@ -57,13 +59,29 @@ _P1_BATCH         = 64               # tiny-frame batch for Phase Correlation
 
 
 def _get_safe_p2_batch(vram_mb: float) -> int:
-    """Return the largest batch size that will not OOM on this GPU at 1080p RGB16."""
-    # 1080p RGB float16: 1920*1080*3*2 bytes ~12.4 MB per frame on GPU
-    # Allow max 30% of available VRAM for the tensor batch
-    # Conservative headroom: subtract 1500 MB for NVENC + DWM + OS
+    """
+    Return the largest warp batch size that will not OOM on this GPU at 1080p RGB16.
+
+    Adaptive VRAM tiers (D-0.0.4):
+      >=24 GB  -> 64 frames  (e.g. RTX 3090 / A100)
+      >=16 GB  -> 48 frames  (e.g. Tesla T4 16 GB, RTX 3080)
+      >= 8 GB  -> 24 frames  (e.g. RTX 3070, Tesla T4 8 GB)
+      >= 4 GB  -> 8 frames   (e.g. GTX 1660, RTX 3050)
+      <  4 GB  -> 1 frame    (safe single-frame mode)
+
+    Each 1080p RGB float16 frame ~12.4 MB on GPU.
+    Conservative headroom: subtract 1500 MB for NVENC + DWM + OS before tiering.
+    """
     free_mb = max(0, vram_mb - 1500)
-    frames = max(1, int(free_mb * 0.30 / 12.5))
-    return min(frames, 12)  # hard cap
+    if free_mb >= 22_000:   # 24 GB card
+        return 64
+    if free_mb >= 14_000:   # 16 GB card
+        return 48
+    if free_mb >= 6_000:    # 8 GB card
+        return 24
+    if free_mb >= 2_000:    # 4 GB card
+        return 8
+    return 1                # <4 GB or no headroom — single-frame safe mode
 
 
 # Pass 1: GPU Phase Correlation Motion Analysis
@@ -116,7 +134,7 @@ def _run_pass1(src, motions_path, total_f, fps, AW, AH, device):
             nvdec_flag = ["-c:v", "vp9_cuvid"]
 
     hwaccel = ["-hwaccel", "cuda"] if torch_cuda_available() else []
-    dec_threads = str(max(1, min(2, os.cpu_count() or 2)))
+    dec_threads = str(get_hw_profile().cpu_threads)
 
     def _make_reader(use_hw):
         cmd = [ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error"]
@@ -214,11 +232,14 @@ def _run_pass1(src, motions_path, total_f, fps, AW, AH, device):
 
 # Smoothing / Virtual Tripod
 
-def _compute_correction_vectors(dx_list, dy_list, AW, AH):
+def _compute_correction_vectors(dx_list, dy_list, AW, AH, mode="gimbal"):
     """
     Compute per-frame (corr_x, corr_y) correction vectors in normalised [-1,1]
-    space, plus zoom factor to avoid black borders.
-    Returns (corr_x, corr_y, zoom).
+    space, with Adaptive Dynamic Zoom to eliminate jitter while preventing black borders.
+
+    Modes:
+      - 'gimbal' (default): Wide-window Gaussian convolution for cinematic drone/gimbal glide.
+      - 'tripod': High-inertia anchor lock for rigid static tripod stability.
     """
     dx_arr = np.array(dx_list, dtype=np.float32)
     dy_arr = np.array(dy_list, dtype=np.float32)
@@ -226,41 +247,57 @@ def _compute_correction_vectors(dx_list, dy_list, AW, AH):
     traj_y = np.cumsum(dy_arr)
     rms_jitter = float(np.sqrt(np.mean(dx_arr**2 + dy_arr**2)))
 
-    zoom = 1.05 if rms_jitter < 1.5 else 1.07
-
-    if rms_jitter < 0.20:
-        n = len(dx_arr)
+    n = len(dx_arr)
+    if rms_jitter < 0.20 or n < 2:
         return np.zeros(n, np.float32), np.zeros(n, np.float32), 1.0
 
-    pan_threshold = max(1.2, AW * 0.006)
-    alpha_pan   = 0.09
-    alpha_still = 0.012
+    # Task 6.2: Adaptive Dynamic Zoom (scaled smoothly based on jitter severity)
+    if rms_jitter < 0.8:
+        zoom = 1.04
+    elif rms_jitter < 2.0:
+        zoom = 1.08
+    elif rms_jitter < 4.0:
+        zoom = 1.10
+    else:
+        zoom = min(1.14, 1.08 + 0.015 * rms_jitter)
 
-    n = len(dx_arr)
-    anchor_x = np.zeros(n, np.float32)
-    anchor_y = np.zeros(n, np.float32)
-    cur_ax = float(traj_x[0])
-    cur_ay = float(traj_y[0])
+    smooth_x = np.zeros(n, np.float32)
+    smooth_y = np.zeros(n, np.float32)
 
-    for i in range(n):
-        dist_x = traj_x[i] - cur_ax
-        dist_y = traj_y[i] - cur_ay
-        dist   = float(np.sqrt(dist_x**2 + dist_y**2))
-        alpha  = alpha_pan if dist > pan_threshold else alpha_still
-        cur_ax += alpha * dist_x
-        cur_ay += alpha * dist_y
-        anchor_x[i] = cur_ax
-        anchor_y[i] = cur_ay
+    if mode == "tripod":
+        # Virtual Tripod: Rigid anchor lock with minimal drift
+        cur_ax = float(traj_x[0])
+        cur_ay = float(traj_y[0])
+        for i in range(n):
+            cur_ax += 0.005 * (traj_x[i] - cur_ax)
+            cur_ay += 0.005 * (traj_y[i] - cur_ay)
+            smooth_x[i] = cur_ax
+            smooth_y[i] = cur_ay
+    else:
+        # Task 6.1: Cinematic Gimbal Mode
+        # Wide Gaussian smoothing window (~1.5 to 2.5 sec of footage) for organic glide
+        radius = min(45, max(15, n // 6))
+        k = np.arange(-radius, radius + 1)
+        sigma = max(1.0, radius / 2.5)
+        kernel = np.exp(-0.5 * (k / sigma)**2)
+        kernel /= kernel.sum()
 
-    diff_x = anchor_x - traj_x
-    diff_y = anchor_y - traj_y
+        pad_x = np.pad(traj_x, radius, mode="edge")
+        pad_y = np.pad(traj_y, radius, mode="edge")
+        smooth_x = np.convolve(pad_x, kernel, mode="valid")
+        smooth_y = np.convolve(pad_y, kernel, mode="valid")
 
-    deadband = 0.35
+    diff_x = smooth_x - traj_x
+    diff_y = smooth_y - traj_y
+
+    # Soft deadband to suppress sub-pixel noise without causing jumpiness
+    deadband = 0.20
     mag = np.sqrt(diff_x**2 + diff_y**2)
     att = np.maximum(0.0, mag - deadband) / (mag + 1e-6)
     diff_x *= att
     diff_y *= att
 
+    # Task 6.3: Relaxed shift margin with adaptive zoom headroom
     max_shift = (zoom - 1.0) / zoom
     corr_x = np.clip(-(diff_x / (AW / 2.0)), -max_shift, max_shift).astype(np.float32)
     corr_y = np.clip(-(diff_y / (AH / 2.0)), -max_shift, max_shift).astype(np.float32)
@@ -327,13 +364,14 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
     vram_mb = gpu_info().get("vram_total", 0)
     batch = _get_safe_p2_batch(vram_mb)
 
-    progress("[8/10] STABILIZE", 0.38,
+    p2_label = "[8/10] FUSED STAB+ENHANCE" if combine_enhance else "[8/10] STABILIZE"
+    progress(p2_label, 0.38,
              f"Pass 2/2 - GPU Warp+{'Enhance' if combine_enhance else 'Encode'} "
              f"(batch={batch}, VRAM_total={int(vram_mb)}MB)")
 
     full_bytes  = W * H * 3
     batch_bytes = full_bytes * batch
-    dec_threads = str(max(1, min(4, os.cpu_count() or 2)))
+    dec_threads = str(get_hw_profile().cpu_threads)
 
     # Adaptive decode strategy:
     #   - Low VRAM GPU  (<= 6 GB, e.g. GTX 1050 Ti 4GB):
@@ -428,25 +466,65 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
     success   = True
     last_err  = b""
 
-    try:
-        with torch.no_grad():
-            while True:
-                # Read exactly one batch -- synchronous, bounded
-                raw = b""
+    # Asynchronous Double-Buffered Multi-Threaded I/O Pipeline:
+    # Eliminates CPU<->GPU pipe bottlenecks by decoupling reader and writer into dedicated threads.
+    in_queue = queue.Queue(maxsize=2)
+    out_queue = queue.Queue(maxsize=2)
+    stop_event = threading.Event()
+    reader_err = []
+    writer_err = []
+
+    def _reader_target():
+        try:
+            while not stop_event.is_set():
+                raw = bytearray()
                 remaining = batch_bytes
-                while remaining > 0:
+                while remaining > 0 and not stop_event.is_set():
                     chunk = reader.stdout.read(remaining)
                     if not chunk:
                         break
-                    raw += chunk
+                    raw.extend(chunk)
                     remaining -= len(chunk)
-
                 if not raw:
+                    break
+                in_queue.put(raw)
+        except Exception as ex:
+            reader_err.append(ex)
+        finally:
+            in_queue.put(None)
+
+    def _writer_target():
+        try:
+            while not stop_event.is_set():
+                chunk_bytes = out_queue.get()
+                if chunk_bytes is None:
+                    out_queue.task_done()
+                    break
+                try:
+                    writer.stdin.write(chunk_bytes)
+                finally:
+                    out_queue.task_done()
+        except Exception as ex:
+            writer_err.append(ex)
+            stop_event.set()
+
+    t_reader = threading.Thread(target=_reader_target, daemon=True)
+    t_writer = threading.Thread(target=_writer_target, daemon=True)
+    t_reader.start()
+    t_writer.start()
+
+    try:
+        with torch.no_grad():
+            while True:
+                if stop_event.is_set():
+                    break
+                raw = in_queue.get()
+                if raw is None:
                     break
 
                 k = len(raw) // full_bytes
                 if k <= 0:
-                    break
+                    continue
 
                 # Build affine transform matrix on GPU
                 theta = torch.zeros((k, 2, 3), dtype=torch.float16, device=device)
@@ -464,7 +542,7 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
                 # Decode raw bytes -> GPU tensor (single contiguous copy)
                 arr   = np.frombuffer(raw[:k * full_bytes], dtype=np.uint8).reshape(k, H, W, 3)
                 t_gpu = (torch.from_numpy(np.ascontiguousarray(arr))
-                              .to(device, non_blocking=False)
+                              .to(device, non_blocking=True)
                               .permute(0, 3, 1, 2)
                               .to(dtype=torch.float16)
                               .div_(255.0))
@@ -479,7 +557,7 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
                 if combine_enhance and recipe:
                     warped = _apply_cinema_enhancement(warped, recipe)
 
-                # GPU -> CPU -> FFmpeg stdin (synchronous)
+                # GPU -> CPU -> out_queue (asynchronous write)
                 out_cpu = (warped.permute(0, 2, 3, 1)
                                  .clamp_(0.0, 1.0)
                                  .mul_(255.0)
@@ -489,28 +567,8 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
                                  .numpy())
                 del warped
 
-                torch.cuda.synchronize()
-
-                try:
-                    writer.stdin.write(out_cpu.tobytes())
-                    writer.stdin.flush()
-                except (BrokenPipeError, OSError):
-                    try:
-                        last_err = writer.stderr.read(1024) if writer.stderr else b"pipe broke"
-                    except Exception:
-                        last_err = b"pipe broke"
-                    success = False
-                    break
-
+                out_queue.put(out_cpu.tobytes())
                 del out_cpu
-
-                if writer.poll() is not None:
-                    try:
-                        last_err = writer.stderr.read(1024) if writer.stderr else b"encoder exited"
-                    except Exception:
-                        last_err = b"encoder exited"
-                    success = False
-                    break
 
                 processed += k
                 elapsed = time.time() - t0
@@ -520,13 +578,40 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
                 progress(label, pct,
                          f"Pass 2/2 - GPU Warp ({fps_p2:.1f} fps | {processed}/{actual_f})")
 
+                if writer.poll() is not None:
+                    try:
+                        last_err = writer.stderr.read(1024) if writer.stderr else b"encoder exited"
+                    except Exception:
+                        last_err = b"encoder exited"
+                    success = False
+                    stop_event.set()
+                    break
+
+                if writer_err:
+                    success = False
+                    stop_event.set()
+                    break
+
     except KeyboardInterrupt:
         success = False
+        stop_event.set()
         eprint("[WARN] Pass 2 interrupted by user.")
     except Exception as ex:
         success = False
+        stop_event.set()
         eprint(f"[WARN] Pass 2 error: {ex}")
     finally:
+        stop_event.set()
+        out_queue.put(None)
+        try:
+            t_reader.join(timeout=3)
+        except Exception:
+            pass
+        try:
+            t_writer.join(timeout=30)
+        except Exception:
+            pass
+
         try:
             reader.stdout.close()
         except Exception:
@@ -643,7 +728,8 @@ def _stabilize_gpu_cuda(src, dst, duration, run_dir, combine_enhance=False):
             combine_enhance = False
 
     # Pass 2: Streaming Warp + Encode
-    progress("[8/10] STABILIZE", 0.38, "Pass 2/2 - Starting GPU Affine Warp")
+    stab_label = "[8/10] FUSED STAB+ENHANCE" if combine_enhance else "[8/10] STABILIZE"
+    progress(stab_label, 0.38, "Pass 2/2 - Starting GPU Affine Warp")
     ok = _run_pass2(
         src=src, dst=dst,
         corr_x=corr_x, corr_y=corr_y,

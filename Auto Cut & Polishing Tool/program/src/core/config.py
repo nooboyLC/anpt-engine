@@ -74,12 +74,17 @@ os.environ["PYTHONUSERBASE"] = str(PROJECT_USERBASE)
 os.environ["XDG_CACHE_HOME"] = str(PROJECT_CACHE)
 os.environ["MPLCONFIGDIR"] = str(PROJECT_CACHE / "matplotlib")
 
-# Thread limit to prevent CPU throttling
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-os.environ.setdefault("MKL_NUM_THREADS", "2")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
-os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")
+# Thread limit — auto-tune to real CPU core count (D-0.0.4)
+# Colab:    2 cores  → 1 thread (leave 1 for OS)
+# 4-core:   4 cores  → 3 threads
+# 16-core: 16 cores  → 8 threads (capped to prevent oversubscription)
+_cpu_cores = os.cpu_count() or 2
+_cpu_threads = str(max(1, min(_cpu_cores - 1, 8)))
+os.environ.setdefault("OMP_NUM_THREADS",       _cpu_threads)
+os.environ.setdefault("MKL_NUM_THREADS",       _cpu_threads)
+os.environ.setdefault("OPENBLAS_NUM_THREADS",  _cpu_threads)
+os.environ.setdefault("NUMEXPR_NUM_THREADS",   _cpu_threads)
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", _cpu_threads)
 
 # Audio Constants
 SAMPLE_RATE = 48_000

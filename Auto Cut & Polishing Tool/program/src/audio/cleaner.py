@@ -16,7 +16,7 @@ from pathlib import Path
 
 from core.config import AI_CHUNK_SECONDS
 from core.media_tools import ffmpeg_path, run, run_ffmpeg_with_progress
-from core.hardware import torch_cuda_available, gpu_status_text
+from core.hardware import torch_cuda_available, gpu_status_text, get_hw_profile
 from core.logger import progress
 from audio.vad import wav_duration
 from audio.cutter import concat_audio_chunks
@@ -37,12 +37,57 @@ def suppress_stdout_stderr():
             sys.stderr = old_stderr
 
 
+def _run_voicefixer(src: Path, dst: Path, step_label: str):
+    """VoiceFixer neural speech restoration with chunked GPU progress updates and robust VRAM handling."""
+    import torch
+    from voicefixer import VoiceFixer
+    from voicefixer.restorer.model import from_log, tensor2numpy, save_wave
+
+    cuda = torch_cuda_available()
+    with suppress_stdout_stderr():
+        vf = VoiceFixer()
+        if cuda:
+            vf._model = vf._model.cuda()
+            vf._model.eval()
+
+    wav_10k = vf._load_wav(str(src), sample_rate=44100)
+    seg_length = 44100 * 30
+    break_point = seg_length
+    chunks = []
+    while break_point < wav_10k.shape[0] + seg_length:
+        chunks.append(wav_10k[break_point - seg_length : break_point])
+        break_point += seg_length
+
+    total_chunks = len(chunks)
+    res = []
+    try:
+        with torch.no_grad():
+            for i, segment in enumerate(chunks):
+                sp, mel_noisy = vf._pre(vf._model, segment, cuda)
+                out_model = vf._model(sp, mel_noisy)
+                denoised_mel = from_log(out_model["mel"])
+                out = vf._model.vocoder(denoised_mel, cuda=cuda)
+                if torch.max(torch.abs(out)) > 1.0:
+                    out = out / torch.max(torch.abs(out))
+                out, _ = vf._trim_center(out, segment)
+                res.append(out)
+
+                cur_pct = min(0.99, (i + 1) / max(1, total_chunks))
+                progress(step_label, cur_pct, f"chunk {i+1}/{total_chunks} | {gpu_status_text()}")
+
+        final_tensor = torch.cat(res, -1)
+        out_np = tensor2numpy(final_tensor.squeeze(0))
+        save_wave(out_np, fname=str(dst), sample_rate=44100)
+        progress(step_label, 1.0, f"{step_label} complete")
+    finally:
+        del vf, res, chunks
+        if cuda:
+            torch.cuda.empty_cache()
+
+
 def dereverb_with_voicefixer(src: Path, dst: Path):
     """VoiceFixer neural de-reverberation."""
-    from voicefixer import VoiceFixer
-    vf = VoiceFixer()
-    vf.restore(input=str(src), output=str(dst), cuda=torch_cuda_available(), mode=0)
-    progress("[3/10] ECHO/REVERB", 1.0, "VoiceFixer de-reverberation complete")
+    _run_voicefixer(src, dst, "[3/10] ECHO/REVERB")
 
 
 def dereverb_audio(src: Path, dst: Path, engine: str, temp_dir: Path, duration: float = 0) -> str:
@@ -65,8 +110,11 @@ def dereverb_audio(src: Path, dst: Path, engine: str, temp_dir: Path, duration: 
         "agate=threshold=-28dB:ratio=2.5:range=-24dB:attack=10:release=100,"
         "acompressor=threshold=-16dB:ratio=2:attack=20:release=200"
     )
+    threads = str(get_hw_profile().cpu_threads)
     cmd = [
-        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", threads,
+        "-i", str(src),
         "-af", dereverb_filters,
         "-c:a", "pcm_s16le", str(dst)
     ]
@@ -199,12 +247,7 @@ def enhance_with_clearvoice(src: Path, dst: Path, temp_dir: Path):
 
 def enhance_with_voicefixer(src: Path, dst: Path):
     """Speech restoration with VoiceFixer mode 0 (gentle — preserves natural voice warmth)."""
-    from voicefixer import VoiceFixer
-    vf = VoiceFixer()
-    # mode=0: gentle noise removal & dereverberation (natural vocal timbre preserved)
-    # mode=2 was removed — it runs a full vocoder resynthesis that creates robotic voice
-    vf.restore(input=str(src), output=str(dst), cuda=torch_cuda_available(), mode=0)
-    progress("[4/10] AI AUDIO", 1.0, "VoiceFixer complete")
+    _run_voicefixer(src, dst, "[4/10] AI AUDIO")
 
 
 def enhance_audio(src: Path, dst: Path, engine: str, temp_dir: Path) -> str:
@@ -229,8 +272,11 @@ def enhance_audio(src: Path, dst: Path, engine: str, temp_dir: Path) -> str:
                 raise RuntimeError("VoiceFixer failed: " + str(exc))
 
     # Safe fallback DSP
+    threads = str(get_hw_profile().cpu_threads)
     run([
-        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+        ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", threads,
+        "-i", str(src),
         "-af", "highpass=f=60,lowpass=f=11000,acompressor=threshold=-18dB:ratio=2:attack=20:release=250",
         "-c:a", "pcm_s16le", str(dst)
     ])

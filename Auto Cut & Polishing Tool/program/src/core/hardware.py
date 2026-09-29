@@ -2,7 +2,13 @@
 """
 core.hardware
 -------------
-GPU telemetry, CUDA, Vulkan, and universal hardware video encoder auto-negotiation.
+GPU telemetry, CUDA, Vulkan, NVDEC probe, and adaptive hardware auto-negotiation.
+
+New in D-0.0.4:
+  - HWProfile: singleton dataclass that captures VRAM, CPU cores, NVDEC/NVENC
+    availability at startup. All modules read from this single source-of-truth.
+  - nvdec_available(): probes FFmpeg for CUDA hardware decode support.
+  - CPU thread limits in config.py now auto-scale to real cpu_count().
 """
 
 from __future__ import annotations
@@ -11,9 +17,106 @@ import os
 import sys
 import subprocess
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.media_tools import command_exists, run, ffmpeg_path, ffprobe_path
+
+
+# ---------------------------------------------------------------------------
+# HWProfile — singleton hardware capability snapshot
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HWProfile:
+    """
+    Immutable hardware capability snapshot captured once at startup.
+    All modules (cutter, stabilizer, vad, config) read from this to
+    auto-tune their own parameters.
+    """
+    cpu_cores:       int   = 1      # logical CPU core count
+    cpu_threads:     int   = 2      # recommended FFmpeg/numpy thread count
+    gpu_available:   bool  = False  # CUDA GPU detected
+    gpu_name:        str   = ""     # GPU display name
+    vram_total_mb:   int   = 0      # total VRAM in MB
+    vram_free_mb:    int   = 0      # estimated free VRAM in MB
+    nvenc_ok:        bool  = False  # FFmpeg h264_nvenc works
+    nvdec_ok:        bool  = False  # FFmpeg CUDA hwaccel decode works
+    cuda_ok:         bool  = False  # PyTorch CUDA available
+    platform:        str   = "unknown"
+
+
+_HW_PROFILE: HWProfile | None = None
+
+
+def get_hw_profile() -> HWProfile:
+    """
+    Returns the cached HWProfile singleton.  On the first call it probes the
+    system (GPU, CPU, NVDEC, NVENC) and caches the result for the entire
+    session — subsequent calls are O(1).
+    """
+    global _HW_PROFILE
+    if _HW_PROFILE is not None:
+        return _HW_PROFILE
+
+    import platform as _platform
+
+    # ── CPU
+    cores = os.cpu_count() or 1
+    # Use up to min(cores, 8) threads for CPU-bound work; always leave 1 core free
+    cpu_threads = max(1, min(cores - 1, 8))
+
+    # ── GPU / CUDA
+    g = gpu_info()          # already defined below; safe because it has no deps
+    cuda_ok = torch_cuda_available()
+
+    # ── VRAM free estimate (total - used - 512 MB OS headroom)
+    vram_free = max(0, g["vram_total"] - g["vram_used"] - 512) if g["available"] else 0
+
+    # ── NVENC probe (reuse cached result from get_best_video_encoder_config)
+    enc, _, _ = get_best_video_encoder_config()
+    nvenc_ok = (enc != "libx264")
+
+    # ── NVDEC probe (lazy — called here so result is cached in HWProfile)
+    nvdec_ok = _probe_nvdec()
+
+    _HW_PROFILE = HWProfile(
+        cpu_cores=cores,
+        cpu_threads=cpu_threads,
+        gpu_available=g["available"],
+        gpu_name=g["name"],
+        vram_total_mb=g["vram_total"],
+        vram_free_mb=vram_free,
+        nvenc_ok=nvenc_ok,
+        nvdec_ok=nvdec_ok,
+        cuda_ok=cuda_ok,
+        platform=_platform.system(),
+    )
+    return _HW_PROFILE
+
+
+def _probe_nvdec() -> bool:
+    """
+    Probes FFmpeg for functional CUDA hardware video decode (NVDEC).
+    Returns True only if a test nullsrc decode succeeds with -hwaccel cuda.
+    """
+    try:
+        ff = ffmpeg_path()
+    except Exception:
+        return False
+    try:
+        r = subprocess.run(
+            [
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-hwaccel", "cuda",
+                "-f", "lavfi", "-i", "nullsrc=s=320x180:r=30:d=0.5",
+                "-frames:v", "1", "-f", "null", "-",
+            ],
+            capture_output=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 
@@ -329,20 +432,28 @@ def nvenc_available() -> bool:
     return enc != "libx264"
 
 
+def nvdec_available() -> bool:
+    """
+    Returns True if FFmpeg CUDA hardware decode (NVDEC) is functional.
+    Uses HWProfile cache so it's free after the first call.
+    """
+    return get_hw_profile().nvdec_ok
+
+
 def print_system():
-    """Prints diagnostic system banner."""
-    g = gpu_info()
-    cuda = torch_cuda_available()
+    """Prints adaptive hardware diagnostic banner."""
+    hw = get_hw_profile()
     _, _, enc_name = get_best_video_encoder_config()
     print("=" * 64)
-    print("AUTO CUT & POLISHING TOOL — HIGH-PERFORMANCE ENGINE")
+    print("AUTO CUT & POLISHING TOOL — ADAPTIVE HARDWARE ENGINE")
     print("=" * 64)
-    if g["available"]:
-        print(f"GPU    : {g['name']}")
-        print(f"VRAM   : {g['vram_used']} / {g['vram_total']} MB")
+    if hw.gpu_available:
+        print(f"GPU    : {hw.gpu_name}")
+        print(f"VRAM   : {hw.vram_free_mb} MB free / {hw.vram_total_mb} MB total")
     else:
         print("GPU    : NOT DETECTED (CPU Fallback Mode)")
-    print(f"CUDA   : {'ON (Tensor Cores Ready)' if cuda else 'OFF'}")
-    print(f"VIDEO  : {'GPU Tensor Core Polish' if cuda else 'CPU Fallback'}")
+    print(f"CPU    : {hw.cpu_cores} cores  →  {hw.cpu_threads} worker threads")
+    print(f"CUDA   : {'ON (Tensor Cores Ready)' if hw.cuda_ok else 'OFF'}")
+    print(f"NVDEC  : {'ON (GPU decode active)' if hw.nvdec_ok else 'OFF (CPU decode)'}")
     print(f"ENCODER: {enc_name}")
     print("=" * 64)
