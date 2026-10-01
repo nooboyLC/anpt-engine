@@ -134,6 +134,8 @@ if exist "%PROGRAM_DIR%\src\core\compat_dlls\*.dll" (
 REM Ensure VoiceFixer checkpoint folder exists in support\checkpoints
 set "VF_CACHE_DST=%SUPPORT_DIR%\checkpoints\voicefixer"
 if not exist "%VF_CACHE_DST%" mkdir "%VF_CACHE_DST%"
+if not exist "%VF_CACHE_DST%\synthesis_module\44100" mkdir "%VF_CACHE_DST%\synthesis_module\44100"
+if not exist "%VF_CACHE_DST%\analysis_module\checkpoints" mkdir "%VF_CACHE_DST%\analysis_module\checkpoints"
 echo      [OK] VoiceFixer models configured strictly inside support\checkpoints
 
 REM Patch voicefixer site-packages to redirect ~/.cache -> support/checkpoints

@@ -91,6 +91,20 @@ else
     echo "[OK] Virtual environment created."
 fi
 
+# Colab Bridge: allow support/venv to import google.colab when running in Google Colab
+if [ -d "/content" ] || [ -d "/usr/local/lib/python3.12/dist-packages/google/colab" ] || [ -d "/usr/local/lib/python3.10/dist-packages/google/colab" ]; then
+    for pth_dir in "$VENV_DIR"/lib/python*/site-packages; do
+        if [ -d "$pth_dir" ]; then
+            for colab_dist in /usr/local/lib/python*/dist-packages; do
+                if [ -d "$colab_dist/google/colab" ]; then
+                    echo "$colab_dist" > "$pth_dir/colab_bridge.pth"
+                    echo "     [COLAB] Bridged system google.colab into support/venv"
+                fi
+            done
+        fi
+    done
+fi
+
 # 3. Update pip
 echo ""
 echo "[STEP 3/6] Updating pip..."

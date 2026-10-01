@@ -197,9 +197,15 @@ def trigger_file_download(dst: Path):
                 print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Triggering browser download for '{dst.name}'...")
                 _colab_files.download(str(dst))
                 print(f"[{current_timestamp_str()}] [DOWNLOAD] Browser download initiated.")
-            except Exception:
-                pass
-        threading.Thread(target=_trigger_colab, daemon=True).start()
+            except ImportError:
+                print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Notice: Direct browser popup download requires execution inside a Google Colab notebook cell.")
+                print(f"[{current_timestamp_str()}] [DOWNLOAD] When running in Colab terminal, please use the Cloud CDN link (Gofile) or your mounted Google Drive destination below.")
+            except Exception as ex:
+                print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Colab browser download notice: {ex}")
+                print(f"[{current_timestamp_str()}] [DOWNLOAD] Please use the high-speed Cloud CDN link below or your synced Google Drive destination.")
+        t_colab = threading.Thread(target=_trigger_colab, daemon=True)
+        t_colab.start()
+        t_colab.join(timeout=2.0)
 
     # 4. High-Speed Cloud CDNs (Gofile & TmpFiles) for shareable link
     # Smart CDN: Only try tmpfiles.org if Gofile failed — never upload the same big file twice.
@@ -214,11 +220,26 @@ def trigger_file_download(dst: Path):
         upload_elapsed = time.time() - t_upload_start
 
         if cloud_url:
+            # Copy download link directly to user's local PC clipboard via OSC 52
+            try:
+                import base64
+                b64 = base64.b64encode(cloud_url.encode("utf-8")).decode("ascii")
+                sys.stdout.write(f"\033]52;c;{b64}\x07")
+                sys.stdout.flush()
+            except Exception:
+                pass
+
             print(f"\n[{current_timestamp_str()}] " + "=" * 60)
             print(f"SHAREABLE CLOUD DOWNLOAD LINK:  [Uploaded in {fmt_duration(upload_elapsed)}]")
             print(f"\n  👉  {cloud_url}\n")
-            print("• You can use this link to download the file from any other computer.")
+            print("• [COPIED] Link copied to your local PC clipboard! Press Ctrl+V in browser.")
             print("• Full-speed download with pause & resume support.")
+            print("=" * 64)
+            print(f"\n📥 ONE-CLICK DOWNLOAD COMMAND FOR YOUR LOCAL PC:")
+            print(f"  Windows (PowerShell):")
+            print(f"    curl.exe -L \"{cloud_url}\" -o \"$HOME\\Downloads\\{dst.name}\"")
+            print(f"  Mac / Linux:")
+            print(f"    curl -L \"{cloud_url}\" -o ~/Downloads/\"{dst.name}\"")
             print("=" * 64)
         else:
             print(f"\n[{current_timestamp_str()}] [INFO] Cloud upload finished/skipped.")
@@ -227,38 +248,44 @@ def trigger_file_download(dst: Path):
         print(f"\n[{current_timestamp_str()}] [UPLOAD] Upload skipped. Your file is safely stored locally at:")
         print(f"  {dst}")
 
-    # 5. LAN fallback server
-    port = 8888
-    encoded_filename = urllib.parse.quote(dst.name)
-    try:
-        httpd = start_http_file_server(dst, port)
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # 5. Local LAN HTTP Server (For downloading across home/office network from another PC)
+    # Fully active on all local PCs (Windows / Linux / Mac). Only skipped on Google Colab cloud datacenter
+    # where 172.30.x.x is an internal Google VM IP unreachable from home routers.
+    if not is_colab():
+        port = 8888
+        encoded_filename = urllib.parse.quote(dst.name)
         try:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
+            httpd = start_http_file_server(dst, port)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                ip = "127.0.0.1"
+            finally:
+                s.close()
+
+            dl_url = f"http://{ip}:{port}/{encoded_filename}"
+            print(f"\n[{current_timestamp_str()}] " + "=" * 60)
+            print("🌐 LOCAL NETWORK (LAN) DOWNLOAD LINK:")
+            print(f"\n  👉  {dl_url}")
+            fname = dst.name
+            if len(fname) > 72:
+                fname = fname[:60] + "..." + fname[-12:]
+            print(f"  📁  File: {fname}")
+            print("  💡  Use this link from any other computer or phone on your home/office Wi-Fi.")
+            print("=" * 64)
+
+            try:
+                if sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+                    input("\n[Press ENTER or CTRL+C when you have finished downloading to close server]\n")
+            except (KeyboardInterrupt, EOFError):
+                pass
+            httpd.shutdown()
+            print(f"[{current_timestamp_str()}] [SERVER] Local LAN server stopped.")
         except Exception:
-            ip = "127.0.0.1"
-        finally:
-            s.close()
-
-        dl_url = f"http://{ip}:{port}/{encoded_filename}"
-        print(f"\n[{current_timestamp_str()}] " + "=" * 60)
-        print("LOCAL NETWORK DOWNLOAD LINK:")
-        print(f"\n  👉  {dl_url}")
-        # Smart filename display: truncate middle of long names but always show extension
-        fname = dst.name
-        if len(fname) > 72:
-            fname = fname[:60] + "..." + fname[-12:]
-        print(f"  📁  File: {fname}\n")
-        print("(Press ENTER or CTRL+C when finished)")
-        print("=" * 64)
-
-        try:
-            if sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
-                input("\n[Press ENTER or CTRL+C to close download server]\n")
-        except (KeyboardInterrupt, EOFError):
-            pass
-        httpd.shutdown()
-        print(f"[{current_timestamp_str()}] [SERVER] Download server stopped.")
-    except Exception:
-        print(f"\n[{current_timestamp_str()}] [DOWNLOAD] File saved at: {dst}")
+            print(f"\n[{current_timestamp_str()}] [DOWNLOAD] File saved at: {dst}")
+    else:
+        print(f"\n[{current_timestamp_str()}] [CLOUD NOTE] Google Colab cloud container detected.")
+        print(f"  Internal container IP (172.30.x.x) is inside Google's datacenter and unreachable over home Wi-Fi.")
+        print(f"  Please use the Shareable Cloud Link (Gofile) or Google Drive destination to download to your local PC.")

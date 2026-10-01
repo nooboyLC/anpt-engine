@@ -318,7 +318,29 @@ def process(args):
             print(f"SUCCESS: Processed media saved to:\n{dst}")
         else:
             print("SUCCESS: Processing complete (Cloud-only mode).")
-        print("=" * 64)        # Step 12: Cloud Upload / Browser Download trigger
+        print("=" * 64)
+
+        # Copy to extra output destinations if requested (e.g. 1,3 saves to both ./output and Google Drive)
+        extra_dirs = getattr(args, "extra_outputs", []) or []
+        for extra_d in extra_dirs:
+            try:
+                e_path = Path(extra_d)
+                e_path.mkdir(parents=True, exist_ok=True)
+                extra_dst = e_path / dst.name
+                shutil.copy2(dst, extra_dst)
+                print(f"[EXTRA DESTINATION] Saved copy to: {extra_dst}")
+                # Also copy thumbnails if generated
+                if getattr(args, "extract_thumbnails", False) and meta["video"]:
+                    src_thumb_dir = (out_dir / "thumbnails") if out_dir is not None else (run_dir / "thumbnails")
+                    if src_thumb_dir.exists():
+                        extra_thumb_dir = e_path / "thumbnails"
+                        extra_thumb_dir.mkdir(parents=True, exist_ok=True)
+                        for thumb_f in src_thumb_dir.glob("*.jpg"):
+                            shutil.copy2(thumb_f, extra_thumb_dir / thumb_f.name)
+            except Exception as e_copy:
+                print(f"[WARN] Failed to copy to secondary destination '{extra_d}': {e_copy}")
+
+        # Step 12: Cloud Upload / Browser Download trigger
         if getattr(args, "download", False) or is_cloud_only:
             log_step("CLOUD & LOCAL DELIVERY")
             trigger_file_download(dst)
@@ -362,34 +384,61 @@ def choose_input_interactive() -> str:
             sys.exit(0)
 
 
-def choose_output_interactive() -> tuple[str | None, str | None, bool]:
-    """Prompts for output directory, custom name, and automatic download."""
+def choose_output_interactive() -> tuple[str | None, list[str], str | None, bool]:
+    """Prompts for output directory (supports multiple choices like '1,3'), custom name, and automatic download."""
     default_out = str(OUTPUT_DIR)
     print("\nOUTPUT DESTINATION")
     print("1. Default project output folder (.\\output)")
     print("2. Custom directory")
     print("3. Google Drive (/content/drive/MyDrive/...)")
+    print("Note: Multiple destinations can be combined (e.g. '1,3' to save both locally and to Google Drive)")
 
-    c = input("Select destination [1-3] (1): ").strip() or "1"
-    if c == "1":
-        out_folder = default_out
-    elif c == "2":
-        out_folder = input("Enter output directory path: ").strip() or default_out
-    elif c == "3":
-        colab_drive = Path("/content/drive/MyDrive")
-        if colab_drive.exists():
-            sub = input("Subfolder under MyDrive (empty for root): ").strip()
-            out_folder = str(colab_drive / sub) if sub else str(colab_drive)
-        else:
-            out_folder = input("Google Drive path: ").strip() or default_out
-    else:
-        out_folder = default_out
+    raw_c = input("Select destination [1-3] (1): ").strip() or "1"
+    import re
+    tokens = [t.strip() for t in re.split(r"[,+\s]+", raw_c) if t.strip()]
+    if not tokens:
+        tokens = ["1"]
+
+    selected_folders: list[str] = []
+
+    for c in tokens:
+        if c == "1":
+            if default_out not in selected_folders:
+                selected_folders.append(default_out)
+        elif c == "2":
+            custom_path = input("Enter custom output directory path: ").strip() or default_out
+            if custom_path not in selected_folders:
+                selected_folders.append(custom_path)
+        elif c == "3":
+            colab_drive = Path("/content/drive/MyDrive")
+            if not colab_drive.exists() and is_colab():
+                try:
+                    from google.colab import drive
+                    print("[GOOGLE DRIVE] Mounting Google Drive at /content/drive ...")
+                    drive.mount("/content/drive")
+                except Exception as ex:
+                    print(f"[WARN] Could not mount Google Drive automatically: {ex}")
+            if colab_drive.exists():
+                sub = input("Subfolder under MyDrive (empty for root, e.g. AutoCut): ").strip() or "AutoCut"
+                target_gdrive = str(colab_drive / sub) if sub else str(colab_drive)
+                if target_gdrive not in selected_folders:
+                    selected_folders.append(target_gdrive)
+            else:
+                gdrive_path = input("Google Drive path (e.g. /content/drive/MyDrive/AutoCut): ").strip()
+                if gdrive_path and gdrive_path not in selected_folders:
+                    selected_folders.append(gdrive_path)
+
+    if not selected_folders:
+        selected_folders = [default_out]
+
+    primary_out = selected_folders[0]
+    extra_outs = selected_folders[1:]
 
     out_name = input("\nCustom output filename (Press ENTER for auto-generated name): ").strip()
     dl_prompt = input("\nAuto-download file to your local PC when finished? [y/N]: ").strip().lower()
     want_download = dl_prompt in ["y", "yes"]
 
-    return out_folder, out_name if out_name else None, want_download
+    return primary_out, extra_outs, out_name if out_name else None, want_download
 
 
 def interactive():
@@ -454,11 +503,12 @@ def interactive():
     is_multi_speaker = False if multi_prompt in ["n", "no"] else True
 
     print("-" * 64)
-    out_folder, out_name, want_download = choose_output_interactive()
+    out_folder, extra_folders, out_name, want_download = choose_output_interactive()
 
     args = argparse.Namespace(
         input=source,
         output=out_folder,
+        extra_outputs=extra_folders,
         output_name=out_name,
         download=want_download,
         cloud_only=(out_folder is None),

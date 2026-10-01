@@ -37,7 +37,7 @@ def extract_vad_audio(src: Path, out_wav: Path):
 def concat_audio_chunks(chunks: list[Path], dst: Path):
     """Lossless concatenation of WAV audio chunks via FFmpeg concat demuxer."""
     list_file = dst.with_suffix(".txt")
-    lines = [f"file '{p.resolve().as_posix().replace("'", "'\\''")}'" for p in chunks]
+    lines = [f"file '{p.resolve().as_posix().replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'" for p in chunks]
     list_file.write_text("\n".join(lines), encoding="utf-8")
     try:
         run([
