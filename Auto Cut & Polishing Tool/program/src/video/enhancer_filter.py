@@ -31,7 +31,7 @@ except Exception:
     torch = None
     F = None
 
-from core.media_tools import ffmpeg_path, probe, run_ffmpeg_with_progress, get_stream_fps, get_fps_mode_flags
+from core.media_tools import ffmpeg_path, run_ffmpeg_with_progress, get_stream_fps, get_fps_mode_flags
 from core.hardware import get_best_video_encoder_config, gpu_info, torch_cuda_available
 from core.logger import progress, eprint
 
@@ -284,7 +284,6 @@ def enhance_video_gpu(src: Path, dst: Path, duration: float, meta: dict) -> bool
     clamp_w       = recipe["clamp_w"]        # Sharpening clamp magnitude (artifact guard)
     denoise_guard = recipe["denoise_guard"]  # Pre-blur before sharpening (heavy compression)
     shadow_lift   = recipe["shadow_lift"]    # Midtone lift for dark footage (black-anchored)
-    black_lift    = recipe.get("black_lift", 0.0)  # Reserved: flat black floor adjustment
     sat_base      = recipe["sat_base"]       # BT.709-luma-aware vibrancy multiplier
     s_curve_amp   = recipe["s_curve_amp"]    # Cinematic S-curve contrast amplitude
     progress("[9/10] ENHANCE", 0.0,

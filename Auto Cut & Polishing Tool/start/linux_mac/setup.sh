@@ -91,24 +91,10 @@ else
     echo "[OK] Virtual environment created."
 fi
 
-# Colab Bridge: allow support/venv to import google.colab when running in Google Colab
-if [ -d "/content" ] || [ -d "/usr/local/lib/python3.12/dist-packages/google/colab" ] || [ -d "/usr/local/lib/python3.10/dist-packages/google/colab" ]; then
-    for pth_dir in "$VENV_DIR"/lib/python*/site-packages; do
-        if [ -d "$pth_dir" ]; then
-            for colab_dist in /usr/local/lib/python*/dist-packages; do
-                if [ -d "$colab_dist/google/colab" ]; then
-                    echo "$colab_dist" > "$pth_dir/colab_bridge.pth"
-                    echo "     [COLAB] Bridged system google.colab into support/venv"
-                fi
-            done
-        fi
-    done
-fi
-
 # 3. Update pip
 echo ""
 echo "[STEP 3/6] Updating pip..."
-"$VENV_PIP" install --upgrade pip || echo "[WARN] pip upgrade warning ignored."
+"$VENV_PIP" install --no-cache-dir --upgrade pip || echo "[WARN] pip upgrade warning ignored."
 
 # 4. Hardware Detection & Direct PyTorch Installation into support/venv
 echo ""
@@ -117,20 +103,20 @@ echo "[STEP 4/6] Detecting Hardware and Installing Packages..."
 OS_TYPE="$(uname -s)"
 if [ "$OS_TYPE" = "Darwin" ]; then
     echo "[HARDWARE] macOS detected. Installing native PyTorch (Metal/MPS)..."
-    "$VENV_PIP" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision
+    "$VENV_PIP" install --no-cache-dir "numpy<2.0.0,>=1.26.0" torch torchaudio
 elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
     echo "[HARDWARE] NVIDIA GPU Detected! Installing CUDA PyTorch..."
-    "$VENV_PIP" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu124
+    "$VENV_PIP" install --no-cache-dir "numpy<2.0.0,>=1.26.0" torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 else
     echo "[HARDWARE] No NVIDIA GPU detected. Installing CPU PyTorch..."
-    "$VENV_PIP" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+    "$VENV_PIP" install --no-cache-dir "numpy<2.0.0,>=1.26.0" torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 fi
 
 echo ""
 echo "[PACKAGES] Installing from requirements.txt..."
-"$VENV_PIP" install -r "$PROGRAM_DIR/requirements.txt" || {
+"$VENV_PIP" install --no-cache-dir -r "$PROGRAM_DIR/requirements.txt" || {
     echo "[RETRY] Retrying requirements installation..."
-    "$VENV_PIP" install -r "$PROGRAM_DIR/requirements.txt"
+    "$VENV_PIP" install --no-cache-dir -r "$PROGRAM_DIR/requirements.txt"
 }
 
 # Patch voicefixer site-packages to redirect ~/.cache -> support/checkpoints
@@ -185,6 +171,20 @@ echo ""
 chmod +x "$DIR/run.sh" 2>/dev/null || true
 chmod +x "$DIR/setup.sh" 2>/dev/null || true
 chmod +x "$DIR/clean.sh" 2>/dev/null || true
+
+# Colab Bridge: allow support/venv to import google.colab when running in Google Colab (Added at the end to prevent PIP conflicts)
+if [ -d "/content" ] || [ -d "/usr/local/lib/python3.12/dist-packages/google/colab" ] || [ -d "/usr/local/lib/python3.10/dist-packages/google/colab" ]; then
+    for pth_dir in "$VENV_DIR"/lib/python*/site-packages; do
+        if [ -d "$pth_dir" ]; then
+            for colab_dist in /usr/local/lib/python*/dist-packages; do
+                if [ -d "$colab_dist/google/colab" ]; then
+                    echo "$colab_dist" > "$pth_dir/colab_bridge.pth"
+                    echo "     [COLAB] Bridged system google.colab into support/venv"
+                fi
+            done
+        fi
+    done
+fi
 
 echo ""
 echo "================================================================"

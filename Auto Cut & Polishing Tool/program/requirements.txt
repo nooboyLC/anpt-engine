@@ -27,7 +27,6 @@ silero-vad>=6.0          # Silero Neural VAD — deep-learning speech/silence cl
 #   CPU-only (smaller):     pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
 torch>=2.0.0
 torchaudio>=2.0.0
-torchvision>=0.15.0
 
 # --- AI Audio Enhancement ---
 clearvoice>=0.1.0        # ClearVoice (MossFormer2_SE_48K) — deep neural speech denoiser & enhancer

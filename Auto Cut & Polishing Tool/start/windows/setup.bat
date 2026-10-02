@@ -100,7 +100,7 @@ if exist "%VENV_PY%" (
 REM 3. Upgrade pip
 echo.
 echo [STEP 3/6] Updating pip...
-"%VENV_PY%" -m pip install --upgrade pip
+"%VENV_PY%" -m pip install --no-cache-dir --upgrade pip
 
 REM 4. Detect GPU and install PyTorch + requirements
 echo.
@@ -109,20 +109,20 @@ taskkill /f /im python.exe >nul 2>&1
 nvidia-smi >nul 2>&1
 if errorlevel 1 (
     echo [HARDWARE] No NVIDIA GPU detected. Installing CPU PyTorch...
-    "%VENV_PIP%" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+    "%VENV_PIP%" install --no-cache-dir "numpy<2.0.0,>=1.26.0" torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 ) else (
     echo [HARDWARE] NVIDIA GPU Detected! Installing CUDA PyTorch...
-    "%VENV_PIP%" install "numpy<2.0.0,>=1.26.0" torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu124
+    "%VENV_PIP%" install --no-cache-dir "numpy<2.0.0,>=1.26.0" torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 )
 
 echo.
 echo [PACKAGES] Installing from requirements.txt...
 taskkill /f /im python.exe >nul 2>&1
-"%VENV_PIP%" install -r "%PROGRAM_DIR%\requirements.txt"
+"%VENV_PIP%" install --no-cache-dir -r "%PROGRAM_DIR%\requirements.txt"
 if errorlevel 1 (
     echo [RETRY] Resolving lock and retrying package installation...
     taskkill /f /im python.exe >nul 2>&1
-    "%VENV_PIP%" install -r "%PROGRAM_DIR%\requirements.txt"
+    "%VENV_PIP%" install --no-cache-dir -r "%PROGRAM_DIR%\requirements.txt"
 )
 
 if exist "%PROGRAM_DIR%\src\core\compat_dlls\*.dll" (
