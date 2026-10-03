@@ -1,0 +1,40 @@
+# =============================================================================
+# Auto Cut & Polishing Tool - Release Repository .gitignore
+# =============================================================================
+
+# Support folder: Isolated virtualenv, downloaded AI models, temp & cache
+Auto Cut & Polishing Tool/support/
+**/support/
+**/venv/
+
+# Output folder: Processed videos, audios, thumbnails
+Auto Cut & Polishing Tool/output/
+**/output/
+
+# Python compiled bytecode
+__pycache__/
+*.py[cod]
+*.class
+
+# Temporary and log files
+*.tmp
+*.temp
+*.log
+hardware_log_*.csv
+*.mp4
+*.wav
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Compat DLLs (auto-injected at runtime if needed)
+Auto Cut & Polishing Tool/program/src/core/compat_dlls/
+**/compat_dlls/
