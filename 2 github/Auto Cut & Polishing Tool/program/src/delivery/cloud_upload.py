@@ -262,21 +262,18 @@ def trigger_file_download(dst: Path):
 
     # 3. Colab browser download
     if is_colab():
-        def _trigger_colab():
-            try:
-                from google.colab import files as _colab_files
-                print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Triggering browser download for '{dst.name}'...")
-                _colab_files.download(str(dst))
-                print(f"[{current_timestamp_str()}] [DOWNLOAD] Browser download initiated.")
-            except ImportError:
-                print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Notice: Direct browser popup download requires execution inside a Google Colab notebook cell.")
-                print(f"[{current_timestamp_str()}] [DOWNLOAD] When running in Colab terminal, please use the Cloud CDN link (Gofile) or your mounted Google Drive destination below.")
-            except Exception as ex:
-                print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Colab browser download notice: {ex}")
-                print(f"[{current_timestamp_str()}] [DOWNLOAD] Please use the high-speed Cloud CDN link below or your synced Google Drive destination.")
-        t_colab = threading.Thread(target=_trigger_colab, daemon=True)
-        t_colab.start()
-        t_colab.join(timeout=2.0)
+        # files.download() MUST run on main thread — IPython kernel is inaccessible from threads
+        try:
+            from google.colab import files as _colab_files
+            print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Triggering browser download for '{dst.name}'...")
+            _colab_files.download(str(dst))
+            print(f"[{current_timestamp_str()}] [DOWNLOAD] Browser download initiated.")
+        except ImportError:
+            print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Notice: Direct browser popup download requires execution inside a Google Colab notebook cell.")
+            print(f"[{current_timestamp_str()}] [DOWNLOAD] When running in Colab terminal, please use the Cloud CDN link (Gofile) or your mounted Google Drive destination below.")
+        except Exception as ex:
+            print(f"\n[{current_timestamp_str()}] [DOWNLOAD] Colab browser download notice: {ex}")
+            print(f"[{current_timestamp_str()}] [DOWNLOAD] Please use the high-speed Cloud CDN link below or your synced Google Drive destination.")
 
         # In Colab: Upload to Gofile / TmpFiles as resilient cloud backup
         _upload_to_cdns(dst)
