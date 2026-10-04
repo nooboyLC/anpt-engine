@@ -15,7 +15,7 @@ from pathlib import Path
 from core.config import SAMPLE_RATE, CHANNELS, VAD_RATE
 from core.media_tools import (
     ffmpeg_path, run, run_ffmpeg_with_progress, probe, get_stream_fps,
-    get_filter_complex_script_flag, get_fps_mode_flags,
+    get_filter_complex_script_flag, get_fps_mode_flags, get_stream_dimensions,
 )
 from core.hardware import get_best_video_encoder_config, get_hw_profile
 
