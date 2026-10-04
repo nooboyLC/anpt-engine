@@ -1,4 +1,36 @@
-﻿================================================================================
+================================================================================
+VERSION : D-0.0.6.2
+DATE    : 2026-10-04
+TYPE    : Hotfix
+TAG     : D-0.0.6.2
+================================================================================
+
+BUG FIX
+-------
+- fix(cutter): add missing get_stream_dimensions import in src/audio/cutter.py
+
+ROOT CAUSE
+----------
+  ffmpeg_concat_cut() এ get_stream_dimensions(vstream, default=(1280, 720)) call
+  করা হচ্ছিল কিন্তু core.media_tools থেকে import করা হয়নি।
+  D-0.0.6.1 এর refactor এর সময় import statement incomplete রয়ে গিয়েছিল।
+
+ERROR
+-----
+  NameError: name 'get_stream_dimensions' is not defined
+  File: program/src/audio/cutter.py, line 104, in ffmpeg_concat_cut
+
+FIX
+---
+  from core.media_tools import (
+      ..., get_stream_dimensions,   # ← added
+  )
+
+AFFECTED
+--------
+  - All workflows that use silence cut (feature 1) on video files
+
+================================================================================
           AUTO CUT & POLISHING TOOL — VERSION HISTORY & NAVIGATION
 ================================================================================
 
