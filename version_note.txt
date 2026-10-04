@@ -1,4 +1,44 @@
 ================================================================================
+VERSION : D-0.0.6.3
+DATE    : 2026-10-04
+TYPE    : Hotfix
+TAG     : D-0.0.6.3
+================================================================================
+
+BUG FIX
+-------
+- fix(delivery): files.download() now runs on main thread in Colab
+
+ROOT CAUSE
+----------
+  google.colab.files.download() IPython kernel-এর JavaScript bridge ব্যবহার করে।
+  এই bridge শুধু main thread থেকে accessible। আগের কোডে এটাকে daemon thread-এ
+  চালানো হচ্ছিল (threading.Thread + join(timeout=2.0)), ফলে kernel=None হয়ে যেত।
+
+ERROR
+-----
+  [DOWNLOAD] Colab browser download notice: 'NoneType' object has no attribute 'kernel'
+
+FIX
+---
+  Removed threading wrapper entirely. _colab_files.download(str(dst)) এখন
+  সরাসরি main thread-এ call হয়।
+
+AUDIT
+-----
+  Full AGENTS.md audit passed:
+  - Syntax check: 17/17 files OK
+  - Import integrity: OK
+  - Security: OK
+  - Thread safety: OK
+  - Scripts (.bat/.sh): 6/6 OK
+  - Dependencies: 10/10 OK
+
+AFFECTED
+--------
+  - src/delivery/cloud_upload.py (trigger_file_download function)
+
+================================================================================
 VERSION : D-0.0.6.2
 DATE    : 2026-10-04
 TYPE    : Hotfix
