@@ -52,7 +52,7 @@ def extract_best_thumbnails(
         ] + hwaccel_args + [
             "-threads", dec_threads,
             "-i", str(video_path),
-            "-vf", f"fps=1/{interval:.2f}",
+            "-vf", f"scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=1/{interval:.2f}",
             "-q:v", "2",
             str(temp_thumb_dir / "frame_%04d.jpg")
         ]
@@ -64,7 +64,7 @@ def extract_best_thumbnails(
                 ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
                 "-threads", dec_threads,
                 "-i", str(video_path),
-                "-vf", f"fps=1/{interval:.2f}",
+                "-vf", f"scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=1/{interval:.2f}",
                 "-q:v", "2",
                 str(temp_thumb_dir / "frame_%04d.jpg")
             ]

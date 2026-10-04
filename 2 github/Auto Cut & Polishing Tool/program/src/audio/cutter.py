@@ -99,9 +99,23 @@ def ffmpeg_concat_cut(src: Path, segments: list[tuple[float, float]], dst: Path,
 
     hw = get_hw_profile()
 
+    vstream = probe(src).get("video")
+    fps = get_stream_fps(vstream, default=30.0)
+    w, h = get_stream_dimensions(vstream, default=(1280, 720))
+
+    # Universal segment normalization filter:
+    # 1. Trims exact timestamp range & resets presentation timestamp.
+    # 2. Rescales and pads any dynamic/variable resolution segments to the master (w, h).
+    # 3. Normalizes SAR to 1:1 and sets constant framerate so concat never crashes.
+    v_norm = (
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        f"setsar=1,fps={fps}"
+    )
+
     fc = []
     for i, (s, e) in enumerate(segments):
-        fc.append(f"[0:v]trim=start={s:.6f}:end={e:.6f},setpts=PTS-STARTPTS[v{i}]")
+        fc.append(f"[0:v]trim=start={s:.6f}:end={e:.6f},setpts=PTS-STARTPTS,{v_norm}[v{i}]")
         fc.append(f"[0:a]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[a{i}]")
     concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(segments)))
     fc.append(f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[outv][outa]")
@@ -112,7 +126,7 @@ def ffmpeg_concat_cut(src: Path, segments: list[tuple[float, float]], dst: Path,
     enc, enc_flags, _ = get_best_video_encoder_config()
     # Auto-tune thread count: use HWProfile cpu_threads (scales with real core count)
     threads_val = str(hw.cpu_threads)
-    fps = get_stream_fps(probe(src).get("video"), default=30.0)
+    # fps and dimensions already probed above
     fc_flag = get_filter_complex_script_flag()
 
     def _build_cmd(fc_f: str, video_enc: str, video_flags: list) -> list:

@@ -48,7 +48,7 @@ except Exception:
 
 from core.media_tools import (
     ffmpeg_path, probe, run_ffmpeg_with_progress,
-    get_stream_fps, get_fps_mode_flags,
+    get_stream_fps, get_stream_dimensions, get_fps_mode_flags,
 )
 from core.hardware import get_best_video_encoder_config, gpu_info, torch_cuda_available, get_hw_profile
 from core.logger import progress, eprint
@@ -415,7 +415,7 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
         ] + _nvdec_p2 + [
             "-threads", dec_threads,
             "-i", str(src.resolve()),
-            "-vf", f"fps={fps}",
+            "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ]
         _decode_mode = f"NVDEC ({_src_codec_p2.upper()})"
@@ -425,7 +425,7 @@ def _run_pass2(src, dst, corr_x, corr_y, scale, fps, W, H,
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
             "-threads", dec_threads,
             "-i", str(src.resolve()),
-            "-vf", f"fps={fps}",
+            "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ]
         _decode_mode = f"CPU (sw, {dec_threads}t)"
@@ -680,8 +680,7 @@ def _stabilize_gpu_cuda(src, dst, duration, run_dir, combine_enhance=False):
     if vstream is None:
         return False
 
-    W   = int(vstream["width"])
-    H   = int(vstream["height"])
+    W, H = get_stream_dimensions(vstream, default=(1280, 720))
     fps = get_stream_fps(vstream, default=30.0)
 
     total_f = max(1, int(round(fps * duration))) if duration > 0 else int(vstream.get("nb_frames", 0))
@@ -756,7 +755,7 @@ def _stabilize_vidstab(src, dst, duration, run_dir, combine_enhance=False):
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
             "-threads", threads, "-filter_threads", threads,
             "-i", str(src.resolve()),
-            "-vf", f"vidstabdetect=stepsize=14:shakiness=8:accuracy=6:result={trf_name}",
+            "-vf", f"scale=trunc(iw/2)*2:trunc(ih/2)*2,vidstabdetect=stepsize=14:shakiness=8:accuracy=6:result={trf_name}",
             "-f", "null", "-",
         ]
         run_ffmpeg_with_progress(pass1_cmd, duration, "[8/10] STABILIZE (1/2)", cwd=run_dir_str)
@@ -769,7 +768,7 @@ def _stabilize_vidstab(src, dst, duration, run_dir, combine_enhance=False):
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
             "-threads", threads, "-filter_threads", threads,
             "-i", str(src.resolve()),
-            "-vf", f"vidstabtransform=input={trf_name}:zoom=3:smoothing=25:optalgo=gauss:interpol=bicubic",
+            "-vf", f"vidstabtransform=input={trf_name}:zoom=3:smoothing=25:optalgo=gauss:interpol=bicubic,scale=trunc(iw/2)*2:trunc(ih/2)*2",
             "-c:v", enc,
         ] + enc_flags + ["-an", str(dst.resolve())]
         run_ffmpeg_with_progress(pass2_cmd, duration, "[8/10] STABILIZE (2/2)", cwd=run_dir_str)

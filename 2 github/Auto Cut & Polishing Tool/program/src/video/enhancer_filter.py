@@ -31,7 +31,7 @@ except Exception:
     torch = None
     F = None
 
-from core.media_tools import ffmpeg_path, run_ffmpeg_with_progress, get_stream_fps, get_fps_mode_flags
+from core.media_tools import ffmpeg_path, run_ffmpeg_with_progress, get_stream_fps, get_stream_dimensions, get_fps_mode_flags
 from core.hardware import get_best_video_encoder_config, gpu_info, torch_cuda_available
 from core.logger import progress, eprint
 
@@ -89,6 +89,7 @@ def profile_video_quality(src: Path, duration: float, meta: dict) -> dict:
         cmd = [
             ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
             "-ss", f"{t:.2f}", "-i", str(src.resolve()),
+            "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1",
             "-vframes", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"
         ]
         try:
@@ -270,8 +271,7 @@ def enhance_video_gpu(src: Path, dst: Path, duration: float, meta: dict) -> bool
     if vstream is None:
         return False
 
-    W = int(vstream["width"])
-    H = int(vstream["height"])
+    W, H = get_stream_dimensions(vstream, default=(1280, 720))
     fps = get_stream_fps(vstream, default=30.0)
     total_f = max(1, int(round(fps * duration))) if duration > 0 else int(vstream.get("nb_frames", 0))
     if total_f <= 0:
@@ -308,7 +308,7 @@ def enhance_video_gpu(src: Path, dst: Path, duration: float, meta: dict) -> bool
     ] + hwaccel_enh + [
         "-threads", dec_threads,
         "-i", str(src.resolve()),
-        "-vf", f"fps={fps}",
+        "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"
     ]
     reader = subprocess.Popen(read_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=64 * 1024 * 1024)
@@ -344,7 +344,7 @@ def enhance_video_gpu(src: Path, dst: Path, duration: float, meta: dict) -> bool
                     ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
                     "-threads", dec_threads,
                     "-i", str(src.resolve()),
-                    "-vf", f"fps={fps}",
+                    "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}",
                     "-f", "rawvideo", "-pix_fmt", "rgb24", "-"
                 ]
                 reader = subprocess.Popen(cpu_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=64 * 1024 * 1024)

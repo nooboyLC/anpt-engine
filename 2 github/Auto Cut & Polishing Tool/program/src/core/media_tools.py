@@ -190,6 +190,23 @@ def probe(path: Path | str) -> dict:
     return {"duration": duration, "video": video, "audio": audio, "raw": data}
 
 
+def get_stream_dimensions(vstream: dict | None, default: tuple[int, int] = (1280, 720)) -> tuple[int, int]:
+    """
+    Extracts reliable even dimensions (width, height) from video stream metadata.
+    Ensures dimensions are positive even integers for encoder compatibility.
+    """
+    if not vstream:
+        return default
+    try:
+        w = int(vstream.get("width") or default[0])
+        h = int(vstream.get("height") or default[1])
+        w = max(2, (w // 2) * 2)
+        h = max(2, (h // 2) * 2)
+        return (w, h)
+    except Exception:
+        return default
+
+
 def get_stream_fps(vstream: dict | None, default: float = 30.0) -> float:
     """
     Calculates reliable playback FPS from a video stream dictionary.
