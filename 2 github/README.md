@@ -14,6 +14,8 @@ Remove silence, clean audio, stabilize footage, and deliver polished media &mdas
 </p>
 
 <p>
+  <a href="#-video-tutorial--walkthrough">Video Tutorial</a> &bull;
+  <a href="#-what-is-this">What Is This?</a> &bull;
   <a href="#-features">Features</a> &bull;
   <a href="#-quick-start">Quick Start</a> &bull;
   <a href="#%EF%B8%8F-how-it-works">How It Works</a> &bull;
@@ -22,6 +24,19 @@ Remove silence, clean audio, stabilize footage, and deliver polished media &mdas
   <a href="#-requirements">Requirements</a>
 </p>
 
+</div>
+
+---
+
+## &#x1F4FA; Video Tutorial &amp; Walkthrough
+
+Watch the complete step-by-step setup and full workflow demo on YouTube:
+
+<div align="center">
+  <a href="https://youtu.be/AbOTxhMEZz0">
+    <img src="https://img.youtube.com/vi/AbOTxhMEZz0/maxresdefault.jpg" alt="Auto Cut &amp; Polishing Tool - Video Tutorial" width="85%" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+  </a>
+  <p><em>Click the image above or <a href="https://youtu.be/AbOTxhMEZz0"><strong>watch the full video tutorial on YouTube</strong></a>.</em></p>
 </div>
 
 ---

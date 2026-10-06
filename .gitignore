@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Auto Cut & Polishing Tool - .gitignore
 # Project root: project_Auto Cut & Polishing Tool/
 # GitHub root : 2 github/Auto Cut & Polishing Tool/
@@ -66,7 +66,7 @@ desktop.ini
 reports/
 HARDWARE_AND_QUALITY_ANALYSIS_REPORT*.md 
 future_enhancement_tasklist.md
-CODEBASE_ARCHITECTURE_GUIDE_RealBasicVSR_v2.md
+# CODEBASE_ARCHITECTURE_GUIDE_RealBasicVSR_v2.md (tracked)
 task.md
 task_list.md
 checkpoints/
@@ -83,3 +83,4 @@ AGENTS.md
 2 github/Auto Cut & Polishing Tool/program/src/core/compat_dlls/
 Auto Cut & Polishing Tool/program/src/core/compat_dlls/
 **/compat_dlls/
+
